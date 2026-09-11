@@ -8,6 +8,7 @@
    [organism.persist :as persist]
    [organism.routes.organism :as routes]
    [reitit.ring :as ring]
+   [ring.middleware.params :refer [wrap-params]]
    [ring.mock.request :as mock]))
 
 (def route-game-state
@@ -23,8 +24,9 @@
 
 (defn- api-app
   []
-  (ring/ring-handler
-   (ring/router [(routes/modern-api-routes :test-db)])))
+  (wrap-params
+   (ring/ring-handler
+    (ring/router [(routes/modern-api-routes :test-db)]))))
 
 (defn- json-request
   [path player]
@@ -67,6 +69,32 @@
       (is (= true (get-in body [:viewer :canAct])))
       (is (= [{:actionId "move-red-0" :kind "move-from"}]
              (:legalActions body))))))
+
+(deftest returns-catch-up-events-after-a-known-revision
+  (with-redefs [persist/load-game (constantly route-game-state)
+                persist/find-open-game (constantly nil)
+                actions/action-context
+                (fn [game actor]
+                  {:game game
+                   :actions [{:actionId (str "act-" actor)}]})]
+    (let [request (-> (json-request "/api/v1/organism/games/pond-life" "alice")
+                      (mock/query-string {:afterRevision "0"}))
+          response ((api-app) request)
+          body (decode-json response)]
+      (is (= 200 (:status response)))
+      (is (= 1 (:toRevision body)))
+      (is (= [1] (mapv :revision (:events body))))
+      (is (= ["game.updated"] (mapv :type (:events body)))))))
+
+(deftest rejects-an-invalid-catch-up-revision
+  (with-redefs [persist/load-game (constantly route-game-state)
+                persist/find-open-game (constantly nil)]
+    (let [request (-> (json-request "/api/v1/organism/games/pond-life" "alice")
+                      (mock/query-string {:afterRevision "recent"}))
+          response ((api-app) request)
+          body (decode-json response)]
+      (is (= 400 (:status response)))
+      (is (= "after-revision-invalid" (:error body))))))
 
 (deftest returns-not-found-for-an-unknown-game
   (with-redefs [persist/load-game (constantly nil)

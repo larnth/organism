@@ -6,7 +6,7 @@
    [clojure.tools.logging :as log]
    [cognitect.transit :as transit]
    [org.httpkit.server :as hk]
-   [organism.api.projection :as projection]
+   [organism.api.events :as events]
    [organism.bots :as bots]
    [organism.game :as game]
    [organism.board :as board]
@@ -102,7 +102,8 @@
 
 (defn connect!
   [{:keys [db game-key player]} channel]
-  (let [game-state (find-game! db game-key player channel)]
+  (let [game-state (find-game! db game-key player channel)
+        viewer (when-not (= "--observer--" player) player)]
     (if (get-in game-state [:invocation :created])
       (let [player-game (persist/find-player-game db game-key player)
             witness (:witness player-game)]
@@ -116,13 +117,16 @@
           :witness witness
           :history (:history game-state)
           :chat (:chat game-state)})
+        (send! channel (events/snapshot game-state viewer))
         ;; If the current turn belongs to a bot, kick off bot turns
         (maybe-run-bot-turns! db game-key))
-      (send!
-       channel
-       (-> game-state
-           (select-keys [:key :invocation :chat])
-           (assoc :type "create"))))))
+      (do
+        (send!
+         channel
+         (-> game-state
+             (select-keys [:key :invocation :chat])
+             (assoc :type "create")))
+        (send! channel (events/snapshot game-state viewer))))))
 
 (defn disconnect-game
   [game-key channel games]
@@ -165,9 +169,7 @@
               viewer (when-not (= "--observer--" connected-player)
                        connected-player)]
           (send! channel
-                 {:type "projection"
-                  :version 1
-                  :projection (projection/project-game game-state viewer)}))))))
+                 (events/game-updated game-state viewer)))))))
 
 (defn drop-game!
   "Forget a deleted game: tell any open tabs, then take it out of the registry.
@@ -177,7 +179,10 @@
   [game-key]
   (let [channels (get-in @games [:games game-key :channels])]
     (when (seq channels)
-      (send-channels! channels {:type "deleted" :key game-key}))
+      (send-channels! channels {:type "deleted" :key game-key})
+      (send-channels! channels {:type "game.deleted"
+                                :version events/version
+                                :gameId game-key}))
     (swap! games update :games dissoc game-key)))
 
 (defn update-create-game
@@ -498,7 +503,11 @@
          chat-message)
         channels (get-in @games [:games game-key :channels])]
     (doseq [ch channels]
-      (send! ch chat-message))
+      (send! ch chat-message)
+      (send! ch {:type "chat.created"
+                 :version events/version
+                 :gameId game-key
+                 :message chat-message}))
     (persist/update-chat! db game-key chat-message)))
 
 (defn notify-clients!

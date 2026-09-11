@@ -2,6 +2,7 @@
   (:require
    [clojure.string :as str]
    [organism.api.commands :as commands]
+   [organism.api.events :as events]
    [organism.api.projection :as projection]
    [organism.board :as board]
    [organism.game :as game]
@@ -24,9 +25,23 @@
   "Return a recipient-safe, read-only snapshot for the modern client."
   [db request]
   (let [game-key (get-in request [:path-params :play])
-        viewer (get-in request [:session :player])]
+        viewer (get-in request [:session :player])
+        query (:query-params request)
+        raw-after (get query "afterRevision" (get query :afterRevision))
+        after-revision (when (some? raw-after)
+                         (if (integer? raw-after)
+                           raw-after
+                           (parse-long raw-after)))]
     (if-let [game-state (load-modern-game db game-key)]
-      (response/response (projection/project-game game-state viewer))
+      (cond
+        (and (some? raw-after) (nil? after-revision))
+        (response/bad-request {:error "after-revision-invalid"})
+
+        (some? after-revision)
+        (response/response (events/catch-up game-state viewer after-revision))
+
+        :else
+        (response/response (projection/project-game game-state viewer)))
       (response/not-found {:error "game-not-found"
                            :gameId game-key}))))
 
