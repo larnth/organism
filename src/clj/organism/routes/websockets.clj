@@ -6,6 +6,7 @@
    [clojure.tools.logging :as log]
    [cognitect.transit :as transit]
    [org.httpkit.server :as hk]
+   [organism.api.projection :as projection]
    [organism.bots :as bots]
    [organism.game :as game]
    [organism.board :as board]
@@ -54,19 +55,24 @@
    :game nil
    :chat []
    :history []
-   :channels #{channel}})
+   :channels #{channel}
+   :channel-players {channel player}})
 
 (defn append-channel!
-  [game-key channel]
+  [game-key player channel]
   (swap!
    games
-   update-in [:games game-key :channels]
-   conj channel))
+   (fn [registry]
+     (-> registry
+         (update-in [:games game-key :channels] conj channel)
+         (assoc-in [:games game-key :channel-players channel] player)))))
 
 (defn load-game
   [db game-key player channel]
   (if-let [game-state (persist/load-game db game-key)]
-    (assoc game-state :channels #{channel})
+    (assoc game-state
+           :channels #{channel}
+           :channel-players {channel player})
     (let [game (empty-game game-key player channel)]
       (if-let [game-state (persist/find-open-game db game-key)]
         (merge game game-state)
@@ -87,8 +93,10 @@
     (if (empty? existing)
       (load-game! db game-key player channel)
       (do
-        (append-channel! game-key channel)
-        (update existing :channels conj channel)))))
+        (append-channel! game-key player channel)
+        (-> existing
+            (update :channels conj channel)
+            (assoc-in [:channel-players channel] player))))))
 
 (declare maybe-run-bot-turns!)
 
@@ -120,7 +128,11 @@
   [game-key channel games]
   (let [games (update-in
                games [:games game-key :channels]
-               #(remove #{channel} %))]
+               #(remove #{channel} %))
+        player-path [:games game-key :channel-players]
+        games (if (get-in games player-path)
+                (update-in games player-path dissoc channel)
+                games)]
     (if (empty? (get-in games [:games game-key :channels]))
       ;; dissoc off the :games map, not off the wrapper — dropping the key from
       ;; the top level did nothing, so every game ever opened stayed resident
@@ -140,6 +152,22 @@
   [channels message]
   (doseq [ch channels]
     (send! ch message)))
+
+(defn refresh-projections!
+  "Refresh the live registry and send each channel its own game projection."
+  [game-state]
+  (let [game-key (:key game-state)
+        live (get-in @games [:games game-key])]
+    (when live
+      (swap! games update-in [:games game-key] merge game-state)
+      (doseq [channel (:channels live)]
+        (let [connected-player (get-in live [:channel-players channel])
+              viewer (when-not (= "--observer--" connected-player)
+                       connected-player)]
+          (send! channel
+                 {:type "projection"
+                  :version 1
+                  :projection (projection/project-game game-state viewer)}))))))
 
 (defn drop-game!
   "Forget a deleted game: tell any open tabs, then take it out of the registry.

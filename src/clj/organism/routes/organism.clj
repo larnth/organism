@@ -66,6 +66,7 @@
       (persist/complete-game! db game-key state)
       (persist/update-player-games! db game-key players state))
     (persist/complete-command! db game-key command-id revision)
+    (ws/refresh-projections! game-state)
     game-state))
 
 (defn- duplicate-command-response
