@@ -1,5 +1,5 @@
-import { render } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { observerProjection } from "../test/fixtures";
 import { GameBoard } from "./GameBoard";
@@ -44,5 +44,44 @@ describe("GameBoard", () => {
     const { container } = render(<GameBoard projection={projection} />);
 
     expect(container.querySelectorAll("[data-coordinate]")).toHaveLength(2);
+  });
+
+  it("turns a legal source space into a keyboard-accessible action", () => {
+    const action = {
+      actionId: "move-source",
+      kind: "move-from",
+      label: "Move element at purple 2",
+      actor: "alice",
+      source: ["purple", 2],
+      targets: [],
+      options: [],
+      consequences: [],
+    };
+    const onAction = vi.fn();
+    render(
+      <GameBoard
+        projection={{ ...observerProjection, legalActions: [action] }}
+        onAction={onAction}
+      />,
+    );
+
+    const space = screen.getByRole("button", { name: action.label });
+    fireEvent.keyDown(space, { key: "Enter" });
+    expect(onAction).toHaveBeenCalledWith(action);
+  });
+
+  it("does not turn multi-space introduction previews into ambiguous board actions", () => {
+    const action = {
+      actionId: "introduction-a",
+      kind: "introduce",
+      label: "Place starting elements",
+      actor: "alice",
+      targets: [["purple", 2], ["purple", 3], ["purple", 4]],
+      options: [],
+      consequences: [],
+    };
+    render(<GameBoard projection={{ ...observerProjection, legalActions: [action] }} onAction={vi.fn()} />);
+
+    expect(screen.queryByRole("button", { name: action.label })).not.toBeInTheDocument();
   });
 });

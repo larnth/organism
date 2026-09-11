@@ -15,6 +15,14 @@
    [organism.routes.websockets :as ws]
    [ring.util.response :as response]))
 
+(defn modern-play-page
+  "Enter the modern same-origin client while preserving the session cookie."
+  [request]
+  (let [game-key (get-in request [:path-params :play])
+        encoded (-> (java.net.URLEncoder/encode game-key "UTF-8")
+                    (str/replace "+" "%20"))]
+    (response/redirect (str "/modern/?game=" encoded))))
+
 (defn- load-modern-game
   [db game-key]
   (or (persist/load-game db game-key)
@@ -368,6 +376,8 @@
                       :middleware [shared/require-auth]}]
    ["/play/:play"    {:get (partial play-page db)}]
    ["/play/:play/"   {:get (partial play-page db)}]
+   ["/modern/:play"  {:get modern-play-page}]
+   ["/modern/:play/" {:get modern-play-page}]
    ["/play/:play/join"   {:post (partial join-game! db)
                           :middleware [shared/require-auth]}]
    ["/play/:play/delete" {:post (partial shared/delete-game! organism-spec db)

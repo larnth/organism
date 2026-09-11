@@ -1,6 +1,7 @@
-import type { GameProjection, JsonValue } from "../api/contracts";
+import type { GameProjection, JsonValue, LegalAction } from "../api/contracts";
 import { ElementGlyph } from "./ElementGlyph";
 import { FoodDots } from "./FoodDots";
+import { isSpatialAction } from "./actionPresentation";
 import { buildBoardLayout } from "./boardLayout";
 
 type Pair = [JsonValue, JsonValue];
@@ -21,7 +22,13 @@ function valueObject(value: JsonValue): Record<string, JsonValue> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 
-export function GameBoard({ projection }: { projection: GameProjection }) {
+export function GameBoard({
+  projection,
+  onAction,
+}: {
+  projection: GameProjection;
+  onAction?: (action: LegalAction) => void;
+}) {
   const boardName = projection.gameId[0]?.toUpperCase() + projection.gameId.slice(1);
   const game = projection.game ?? {};
   const ringsValue = game.rings;
@@ -81,6 +88,14 @@ export function GameBoard({ projection }: { projection: GameProjection }) {
     const at = coordinate(rawCoordinate);
     if (at && typeof rawFood === "number") food.set(`${at[0]}:${at[1]}`, rawFood);
   }
+  const actionsByCoordinate = new Map<string, LegalAction>();
+  for (const action of projection.legalActions.filter(({ kind }) => isSpatialAction(kind))) {
+    for (const value of [action.source, ...(action.targets ?? [])]) {
+      if (value === undefined) continue;
+      const at = coordinate(value);
+      if (at) actionsByCoordinate.set(`${at[0]}:${at[1]}`, action);
+    }
+  }
 
   return (
     <div className="board-frame surface">
@@ -121,8 +136,24 @@ export function GameBoard({ projection }: { projection: GameProjection }) {
             const player = typeof element?.player === "string" ? element.player : null;
             const type = typeof element?.type === "string" ? element.type : null;
             const pieceColor = player ? playerColors.get(player) ?? "#79e5b0" : null;
+            const action = actionsByCoordinate.get(key);
+            const activate = action && onAction ? () => onAction(action) : undefined;
             return (
-              <g key={key} data-coordinate={key} aria-label={`${ring} ${index}`}>
+              <g
+                key={key}
+                data-coordinate={key}
+                aria-label={action?.label ?? `${ring} ${index}`}
+                className={action ? "board-location board-location--action" : "board-location"}
+                role={action ? "button" : undefined}
+                tabIndex={action ? 0 : undefined}
+                onClick={activate}
+                onKeyDown={action && onAction ? (event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onAction(action);
+                  }
+                } : undefined}
+              >
                 <circle
                   className="board-space"
                   cx={x}

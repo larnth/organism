@@ -1,12 +1,18 @@
 import { useEffect, useState } from "react";
 
-import { fetchCatchUp, fetchGame, GameApiError } from "./api/client";
-import type { CatchUpResponse, GameProjection } from "./api/contracts";
+import { fetchCatchUp, fetchGame, GameApiError, submitCommand } from "./api/client";
+import type { CatchUpResponse, GameProjection, LegalAction } from "./api/contracts";
+import { selectNewerProjection } from "./projectionState";
 import { ObserveGamePage } from "./routes/ObserveGamePage";
 import "./styles/game.css";
 
 type Loader = (gameId: string) => Promise<GameProjection>;
 type UpdateLoader = (gameId: string, afterRevision: number) => Promise<CatchUpResponse>;
+type ActionSubmitter = (
+  gameId: string,
+  actionId: string,
+  expectedRevision: number,
+) => Promise<GameProjection>;
 
 type LoadState =
   | { kind: "loading" }
@@ -19,16 +25,20 @@ export function App({
   initialProjection,
   loadGame = fetchGame,
   loadUpdates = fetchCatchUp,
+  submitAction = submitCommand,
   pollInterval = 5000,
 }: {
   gameId: string | null;
   initialProjection?: GameProjection;
   loadGame?: Loader;
   loadUpdates?: UpdateLoader;
+  submitAction?: ActionSubmitter;
   pollInterval?: number;
 }) {
   const [attempt, setAttempt] = useState(0);
   const [connectionState, setConnectionState] = useState<"connected" | "reconnecting">("connected");
+  const [actionState, setActionState] = useState<"ready" | "submitting" | "error">("ready");
+  const [actionError, setActionError] = useState<string>();
   const [state, setState] = useState<LoadState>(() =>
     initialProjection ? { kind: "loaded", projection: initialProjection } : { kind: "loading" },
   );
@@ -77,7 +87,9 @@ export function App({
         const latest = [...update.events].reverse().find((event) => event.projection)?.projection;
         setConnectionState("connected");
         if (latest) {
-          setState({ kind: "loaded", projection: latest });
+          setState((current) => current.kind === "loaded"
+            ? { kind: "loaded", projection: selectNewerProjection(current.projection, latest) }
+            : current);
           return;
         }
       } catch {
@@ -92,8 +104,46 @@ export function App({
     };
   }, [gameId, initialProjection, loadUpdates, pollInterval, state]);
 
+  const handleAction = async (action: LegalAction) => {
+    if (state.kind !== "loaded" || actionState === "submitting") return;
+    setActionState("submitting");
+    setActionError(undefined);
+    try {
+      const projection = await submitAction(
+        state.projection.gameId,
+        action.actionId,
+        state.projection.revision,
+      );
+      setState((current) => current.kind === "loaded"
+        ? { kind: "loaded", projection: selectNewerProjection(current.projection, projection) }
+        : { kind: "loaded", projection });
+      setActionState("ready");
+    } catch (error) {
+      if (error instanceof GameApiError && error.status === 409 && gameId) {
+        try {
+          const projection = await loadGame(gameId);
+          setState({ kind: "loaded", projection });
+          setActionError("The board changed, so your available choices were refreshed.");
+        } catch {
+          setActionError("The board changed and could not be refreshed yet.");
+        }
+      } else {
+        setActionError(error instanceof Error ? error.message : "That action could not be applied.");
+      }
+      setActionState("error");
+    }
+  };
+
   if (state.kind === "loaded") {
-    return <ObserveGamePage projection={state.projection} connectionState={connectionState} />;
+    return (
+      <ObserveGamePage
+        projection={state.projection}
+        connectionState={connectionState}
+        onAction={state.projection.viewer.canAct ? handleAction : undefined}
+        actionState={actionState}
+        actionError={actionError}
+      />
+    );
   }
 
   return (

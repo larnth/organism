@@ -119,6 +119,13 @@
       (is (= "waiting" (:status body)))
       (is (= false (get-in body [:viewer :canAct]))))))
 
+(deftest modern-player-page-preserves-the-game-id-in-the-client-route
+  (let [response (routes/modern-play-page
+                  {:path-params {:play "pond life/alpha"}})]
+    (is (= 302 (:status response)))
+    (is (= "/modern/?game=pond%20life%2Falpha"
+           (get-in response [:headers "Location"])))))
+
 (def command-game-state
   {:key "canonical-game"
    :invocation {:players ["orb" "mass"]}

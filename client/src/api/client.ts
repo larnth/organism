@@ -61,6 +61,31 @@ export async function fetchCatchUp(
   return (await response.json()) as CatchUpResponse;
 }
 
+export async function submitCommand(
+  gameId: string,
+  actionId: string,
+  expectedRevision: number,
+  request: Requester = fetch,
+  commandId: string = crypto.randomUUID(),
+): Promise<GameProjection> {
+  const response = await request(
+    `/api/v1/organism/games/${encodeURIComponent(gameId)}/commands`,
+    {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ actionId, expectedRevision, commandId }),
+    },
+  );
+  if (!response.ok) {
+    throw new GameApiError(await readError(response), response.status);
+  }
+  return (await response.json()) as GameProjection;
+}
+
 export function gameSocketUrl(gameId: string, location: URL = new URL(window.location.href)) {
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
   return `${protocol}//${location.host}/ws/organism/play/${encodeURIComponent(gameId)}`;

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { fetchCatchUp, fetchGame, gameSocketUrl } from "./client";
+import { fetchCatchUp, fetchGame, gameSocketUrl, submitCommand } from "./client";
 
 const projection = {
   gameId: "pond-life",
@@ -68,6 +68,29 @@ describe("modern game API", () => {
     expect(request).toHaveBeenCalledWith(
       "/api/v1/organism/games/pond-life?afterRevision=4",
       expect.objectContaining({ headers: { Accept: "application/json" } }),
+    );
+  });
+
+  it("submits one revision-safe idempotent command", async () => {
+    const request = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ...projection, revision: 5 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await submitCommand("pond life", "move-action", 4, request, "command-123");
+
+    expect(request).toHaveBeenCalledWith(
+      "/api/v1/organism/games/pond%20life/commands",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          actionId: "move-action",
+          expectedRevision: 4,
+          commandId: "command-123",
+        }),
+      }),
     );
   });
 });

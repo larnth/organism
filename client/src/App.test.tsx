@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
@@ -38,5 +38,38 @@ describe("App", () => {
 
     expect(await screen.findByText("Reconnecting")).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Pond-life game board" })).toBeInTheDocument();
+  });
+
+  it("applies a projected action and replaces the projection", async () => {
+    const action = {
+      actionId: "plan-move",
+      kind: "choose-action-type",
+      label: "Plan move actions",
+      actor: "alice",
+      options: ["move"],
+      targets: [],
+      consequences: [],
+    };
+    const playerProjection = {
+      ...observerProjection,
+      viewer: { player: "alice", role: "player" as const, canAct: true },
+      legalActions: [action],
+    };
+    const submitAction = vi.fn().mockResolvedValue({
+      ...playerProjection,
+      revision: 9,
+      legalActions: [],
+    });
+    render(
+      <App
+        gameId="pond-life"
+        initialProjection={playerProjection}
+        submitAction={submitAction}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: action.label }));
+    expect(await screen.findByText(/Revision 9/)).toBeInTheDocument();
+    expect(submitAction).toHaveBeenCalledWith("pond-life", action.actionId, 8);
   });
 });

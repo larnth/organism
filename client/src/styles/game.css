@@ -40,6 +40,9 @@ button, input { font: inherit; }
 }
 .empty-state h1 { margin: 0; font-size: clamp(24px, 6vw, 40px); text-wrap: balance; }
 .empty-state p { max-width: 38ch; margin: 0; color: var(--muted); }
+.waiting-room { min-height: 420px; padding: clamp(28px, 6vw, 72px); display: grid; align-content: center; justify-items: center; text-align: center; }
+.waiting-room h2 { margin: 10px 0 0; font-size: clamp(28px, 5vw, 48px); }
+.waiting-room p { max-width: 520px; margin: 14px 0 0; color: var(--muted); line-height: 1.6; }
 .empty-state button { margin-top: 8px; padding: 10px 16px; border: 1px solid #6f9b82; border-radius: 8px; background: #193228; color: var(--ink); cursor: pointer; }
 
 .game-shell {
@@ -134,6 +137,10 @@ button, input { font: inherit; }
 .board-background-ring--field { fill: #08110f; opacity: 1; }
 .board-space { stroke: #09130f; stroke-width: 2.25; opacity: .92; transition: opacity 140ms ease, filter 140ms ease; }
 .board-space:hover { opacity: 1; filter: brightness(1.14); }
+.board-location--action { cursor: pointer; outline: none; }
+.board-location--action .board-space { stroke: #f5d985; stroke-width: 5; filter: brightness(1.12); }
+.board-location--action:focus .board-space,
+.board-location--action:hover .board-space { stroke: #fff2ae; stroke-width: 7; filter: brightness(1.24) drop-shadow(0 0 7px #e5b84d99); }
 .element { fill: currentColor; stroke: #07120d; stroke-width: 3; filter: drop-shadow(0 3px 4px #0009); }
 .food-dots { fill: #f4c95d; stroke: #07120d; stroke-width: 1.25; filter: drop-shadow(0 1px 1px #0008); }
 .food-seed { paint-order: stroke fill; }
@@ -179,6 +186,26 @@ button, input { font: inherit; }
 .victory-note { margin: 14px 0 0; color: var(--accent-soft); font-size: 13px; line-height: 1.45; }
 .observer-note { margin-top: auto; padding: 16px; }
 .observer-note p { margin: 8px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.action-panel { margin-top: auto; padding: 16px; }
+.action-panel h2 { margin: 7px 0 0; font-size: 20px; line-height: 1.15; text-wrap: balance; }
+.action-panel__hint { margin: 8px 0 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.action-list { margin-top: 14px; display: grid; gap: 8px; }
+.action-list button {
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #769b84;
+  border-radius: 8px;
+  background: #1b382c;
+  color: var(--ink);
+  font-weight: 750;
+  text-align: left;
+  cursor: pointer;
+}
+.action-list button:hover,
+.action-list button:focus-visible { border-color: var(--accent-soft); background: #254a3a; outline: none; }
+.action-list button:disabled { cursor: wait; opacity: .58; }
+.action-feedback { min-height: 18px; margin-top: 10px; color: var(--muted); font: 600 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.action-feedback--error { color: #ffb5a8; }
 
 @media (max-width: 900px) {
   .game-stage { grid-template-columns: 1fr; }
