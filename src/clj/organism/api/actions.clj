@@ -108,6 +108,21 @@
                  {:choice raw-choice :game next-game})))
        vec))
 
+(defn resolve-current-action
+  "Resolve an action ID against the current server-derived choice set."
+  [initial-game actor requested-id]
+  (let [[stable-game phase choices] (choice/find-next-choices initial-game)
+        current-player (game/current-player stable-game)
+        active? (nil? (get-in stable-game [:state :winner]))
+        can-act (and active? (= actor current-player))]
+    {:game stable-game
+     :phase phase
+     :current-player current-player
+     :active? active?
+     :matches (if can-act
+                (resolve-action phase choices requested-id)
+                [])}))
+
 (defn action-context
   "Auto-advance forced engine states and describe choices for the acting player."
   [initial-game actor]
