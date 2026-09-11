@@ -1,6 +1,7 @@
 (ns organism.routes.organism
   (:require
    [clojure.string :as str]
+   [organism.api.projection :as projection]
    [organism.board :as board]
    [organism.game :as game]
    [organism.layout :as layout]
@@ -11,6 +12,28 @@
    [organism.routes.shared :as shared]
    [organism.routes.websockets :as ws]
    [ring.util.response :as response]))
+
+(defn- load-modern-game
+  [db game-key]
+  (or (persist/load-game db game-key)
+      (some-> (persist/find-open-game db game-key)
+              (assoc :key game-key :game nil :history []))))
+
+(defn game-projection-response
+  "Return a recipient-safe, read-only snapshot for the modern client."
+  [db request]
+  (let [game-key (get-in request [:path-params :play])
+        viewer (get-in request [:session :player])]
+    (if-let [game-state (load-modern-game db game-key)]
+      (response/response (projection/project-game game-state viewer))
+      (response/not-found {:error "game-not-found"
+                           :gameId game-key}))))
+
+(defn modern-api-routes
+  [db]
+  ["/api/v1/organism"
+   {:middleware [middleware/wrap-formats]}
+   ["/games/:play" {:get (partial game-projection-response db)}]])
 
 ;; ── Learn page clips ─────────────────────────────────────────────────────
 

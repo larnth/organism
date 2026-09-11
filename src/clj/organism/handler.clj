@@ -5,7 +5,7 @@
    [organism.layout :refer [error-page]]
    [organism.routes.home :refer [home-routes]]
    ;; [organism.routes.api :refer [api-routes]]
-   [organism.routes.organism :refer [organism-routes]]
+   [organism.routes.organism :refer [modern-api-routes organism-routes]]
    [organism.routes.journey :refer [journey-routes]]
    [organism.routes.journey-ws :refer [journey-ws-routes]]
    [organism.routes.journey-bots :refer [journey-bot-routes organism-bot-routes]]
@@ -37,7 +37,7 @@
    (ring/router
     (let [db (db/connect! mongo-connection)]
       [(home-routes db)
-       ;; (api-routes)
+       (modern-api-routes db)
        (organism-routes db)
        (journey-routes db)
        (journey-bot-routes db)
