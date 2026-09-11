@@ -254,6 +254,37 @@
   (let [serial (serialize-state state)]
     (db/insert! db (history-key key) serial)))
 
+(def command-collection :organism-commands)
+
+(defn find-command
+  [db game-key command-id]
+  (db/one db command-collection
+          {:game-key game-key :command-id command-id}))
+
+(defn reserve-command!
+  "Reserve a command ID once across server processes."
+  [db record]
+  (db/index! db command-collection [:game-key :command-id] {:unique true})
+  (let [record (assoc record :status "pending")]
+    (try
+      (db/insert! db command-collection record)
+      {:reserved? true :record record}
+      (catch Exception error
+        (if-let [existing (find-command db (:game-key record) (:command-id record))]
+          {:reserved? false :record existing}
+          (throw error))))))
+
+(defn complete-command!
+  [db game-key command-id revision]
+  (db/merge! db command-collection
+             {:game-key game-key :command-id command-id}
+             {:status "complete" :revision revision}))
+
+(defn delete-command!
+  [db game-key command-id]
+  (db/delete! db command-collection
+              {:game-key game-key :command-id command-id}))
+
 (defn update-chat!
   [db key line]
   (db/insert! db (chat-key key) line))

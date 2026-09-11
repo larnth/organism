@@ -3,6 +3,7 @@
    [clojure.test :refer :all]
    [muuntaja.core :as m]
    [organism.api.actions :as actions]
+   [organism.examples :as examples]
    [organism.middleware.formats :as formats]
    [organism.persist :as persist]
    [organism.routes.organism :as routes]
@@ -34,6 +35,13 @@
 (defn- decode-json
   [response]
   (m/decode formats/instance "application/json" (:body response)))
+
+(defn- command-request
+  [game-id player body]
+  (-> (mock/request :post (str "/api/v1/organism/games/" game-id "/commands"))
+      (mock/header "accept" "application/json")
+      (assoc :session {:player player}
+             :body-params body)))
 
 (deftest returns-a-revisioned-game-projection
   (with-redefs [persist/load-game (fn [db game-id]
@@ -82,3 +90,87 @@
       (is (= 200 (:status response)))
       (is (= "waiting" (:status body)))
       (is (= false (get-in body [:viewer :canAct]))))))
+
+(def command-game-state
+  {:key "canonical-game"
+   :invocation {:players ["orb" "mass"]}
+   :game examples/two-player-close
+   :history [examples/two-player-close]
+   :chat []})
+
+(deftest persists-a-legal-command-and-returns-the-new-projection
+  (let [stored (atom command-game-state)
+        persisted-command (atom nil)
+        player-updates (atom [])
+        action-id (:actionId (first (:actions (actions/action-context
+                                               (:game command-game-state)
+                                               "orb"))))]
+    (with-redefs [persist/load-game (fn [_ _] @stored)
+                  persist/find-command (constantly nil)
+                  persist/reserve-command! (fn [_ record]
+                                             {:reserved? true :record record})
+                  persist/update-state! (fn [_ _ state]
+                                          (swap! stored
+                                                 (fn [game-state]
+                                                   (-> game-state
+                                                       (assoc-in [:game :state] state)
+                                                       (update :history conj state)))))
+                  persist/update-player-games! (fn [_ game-id players state]
+                                                 (swap! player-updates conj
+                                                        [game-id players state]))
+                  persist/complete-game! (fn [& _]
+                                           (throw (ex-info "not complete" {})))
+                  persist/complete-command! (fn [_ game-id command-id revision]
+                                              (reset! persisted-command
+                                                      [game-id command-id revision]))]
+      (let [response ((api-app)
+                      (command-request "canonical-game" "orb"
+                                       {:actionId action-id
+                                        :expectedRevision 0
+                                        :commandId "command-1"}))
+            body (decode-json response)]
+        (is (= 200 (:status response)))
+        (is (= 1 (:revision body)))
+        (is (= ["canonical-game" "command-1" 1]
+               @persisted-command))
+        (is (= 1 (count @player-updates)))
+        (is (not= examples/two-player-close (:game @stored)))))))
+
+(deftest retries-a-completed-command-without-applying-it-again
+  (let [writes (atom 0)
+        existing {:game-key "canonical-game"
+                  :command-id "command-1"
+                  :player "orb"
+                  :action-id "same-action"
+                  :expected-revision 0
+                  :status "complete"
+                  :revision 1}]
+    (with-redefs [persist/load-game (constantly command-game-state)
+                  persist/find-command (fn [_ _ _] existing)
+                  persist/update-state! (fn [& _] (swap! writes inc))]
+      (let [response ((api-app)
+                      (command-request "canonical-game" "orb"
+                                       {:actionId "same-action"
+                                        :expectedRevision 0
+                                        :commandId "command-1"}))]
+        (is (= 200 (:status response)))
+        (is (zero? @writes))))))
+
+(deftest rejects-reuse-of-a-command-id-for-a-different-command
+  (with-redefs [persist/load-game (constantly command-game-state)
+                persist/find-command
+                (fn [_ _ _]
+                  {:game-key "canonical-game"
+                   :command-id "command-1"
+                   :player "orb"
+                   :action-id "original-action"
+                   :expected-revision 0
+                   :status "complete"})]
+    (let [response ((api-app)
+                    (command-request "canonical-game" "orb"
+                                     {:actionId "different-action"
+                                      :expectedRevision 0
+                                      :commandId "command-1"}))
+          body (decode-json response)]
+      (is (= 409 (:status response)))
+      (is (= "command-id-conflict" (:error body))))))

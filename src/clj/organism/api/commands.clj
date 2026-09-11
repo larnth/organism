@@ -7,7 +7,7 @@
   [value key]
   (get value key (get value (name key))))
 
-(defn- revision
+(defn current-revision
   [game-state]
   (max 0 (dec (count (or (:history game-state) [])))))
 
@@ -27,7 +27,7 @@
   (let [action-id (field body :actionId)
         expected-revision (field body :expectedRevision)
         command-id (field body :commandId)
-        current-revision (revision game-state)
+        current-revision (current-revision game-state)
         players (set (get-in game-state [:invocation :players]))]
     (cond
       (not (nonblank-string? action-id))

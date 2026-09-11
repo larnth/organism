@@ -1,6 +1,7 @@
 (ns organism.routes.organism
   (:require
    [clojure.string :as str]
+   [organism.api.commands :as commands]
    [organism.api.projection :as projection]
    [organism.board :as board]
    [organism.game :as game]
@@ -29,11 +30,119 @@
       (response/not-found {:error "game-not-found"
                            :gameId game-key}))))
 
+(defonce ^:private command-locks (atom {}))
+
+(defn- command-lock
+  [game-key]
+  (get (swap! command-locks
+              #(if (contains? % game-key)
+                 %
+                 (assoc % game-key (Object.))))
+       game-key))
+
+(defn- command-field
+  [body key]
+  (get body key (get body (name key))))
+
+(defn- error-response
+  [{:keys [http-status] :as result}]
+  (-> (response/response (dissoc result :status :http-status))
+      (response/status http-status)))
+
+(defn- same-command?
+  [record game-key player body]
+  (= [game-key player
+      (command-field body :actionId)
+      (command-field body :expectedRevision)]
+     [(:game-key record) (:player record)
+      (:action-id record) (:expected-revision record)]))
+
+(defn- finalize-command!
+  [db game-key command-id game-state]
+  (let [state (get-in game-state [:game :state])
+        players (get-in game-state [:invocation :players])
+        revision (commands/current-revision game-state)]
+    (if (:winner state)
+      (persist/complete-game! db game-key state)
+      (persist/update-player-games! db game-key players state))
+    (persist/complete-command! db game-key command-id revision)
+    game-state))
+
+(defn- duplicate-command-response
+  [db game-key player body record]
+  (cond
+    (not (same-command? record game-key player body))
+    (-> (response/response {:error "command-id-conflict"})
+        (response/status 409))
+
+    (= "complete" (:status record))
+    (response/response
+     (projection/project-game (persist/load-game db game-key) player))
+
+    :else
+    (let [game-state (persist/load-game db game-key)
+          expected (command-field body :expectedRevision)]
+      (if (> (commands/current-revision game-state) expected)
+        (response/response
+         (projection/project-game
+          (finalize-command! db game-key (:command-id record) game-state)
+          player))
+        (-> (response/response {:error "command-in-progress"})
+            (response/status 409))))))
+
+(defn- apply-command!
+  [db game-key player body result]
+  (let [command-id (:command-id result)
+        expected (command-field body :expectedRevision)
+        record {:game-key game-key
+                :command-id command-id
+                :player player
+                :action-id (:action-id result)
+                :expected-revision expected}
+        reservation (persist/reserve-command! db record)]
+    (if-not (:reserved? reservation)
+      (duplicate-command-response db game-key player body (:record reservation))
+      (try
+        (persist/update-state! db game-key (get-in result [:game :state]))
+        (let [game-state (persist/load-game db game-key)]
+          (response/response
+           (projection/project-game
+            (finalize-command! db game-key command-id game-state)
+            player)))
+        (catch Exception error
+          (let [game-state (persist/load-game db game-key)]
+            (if (> (commands/current-revision game-state) expected)
+              (response/response
+               (projection/project-game
+                (finalize-command! db game-key command-id game-state)
+                player))
+              (do
+                (persist/delete-command! db game-key command-id)
+                (throw error)))))))))
+
+(defn game-command-response
+  [db request]
+  (let [game-key (get-in request [:path-params :play])
+        player (get-in request [:session :player])
+        body (or (:body-params request) (:params request) {})]
+    (locking (command-lock game-key)
+      (if-let [game-state (persist/load-game db game-key)]
+        (if-let [record (persist/find-command
+                         db game-key (command-field body :commandId))]
+          (duplicate-command-response db game-key player body record)
+          (let [result (commands/execute-command game-state player body)]
+            (if (= :accepted (:status result))
+              (apply-command! db game-key player body result)
+              (error-response result))))
+        (response/not-found {:error "game-not-found"
+                             :gameId game-key})))))
+
 (defn modern-api-routes
   [db]
   ["/api/v1/organism"
    {:middleware [middleware/wrap-formats]}
-   ["/games/:play" {:get (partial game-projection-response db)}]])
+   ["/games/:play" {:get (partial game-projection-response db)}]
+   ["/games/:play/commands" {:post (partial game-command-response db)}]])
 
 ;; ── Learn page clips ─────────────────────────────────────────────────────
 
