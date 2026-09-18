@@ -102,6 +102,25 @@
       (is (= ["deleted" "game.deleted"] (mapv :type @sent)))
       (is (nil? (get-in @ws/games [:games "pond-life"]))))))
 
+(deftest chat-uses-the-authenticated-player-and-rejects-nonplayers
+  (let [sent (atom [])
+        persisted (atom [])]
+    (reset! ws/games
+            {:games {"pond-life"
+                     (assoc projected-game-state :channels #{:channel})}})
+    (with-redefs [ws/send! (fn [_ message] (swap! sent conj message))
+                  persist/update-chat! (fn [_ _ message] (swap! persisted conj message))]
+      (ws/update-chat :db "alice" "pond-life" :channel
+                      {:player "bob" :message "hello"})
+      (is (= "alice" (:player (first @persisted))))
+      (reset! persisted [])
+      (reset! sent [])
+      (is (= "only players in this game can post messages"
+             (:error (ws/update-chat :db "--observer--" "pond-life" :channel
+                                     {:player "alice" :message "spoof"}))))
+      (is (empty? @persisted))
+      (is (= ["error"] (mapv :type @sent))))))
+
 (deftest tracks-the-viewer-for-new-and-existing-websocket-games
   (with-redefs [persist/load-game (constantly nil)
                 persist/find-open-game (constantly nil)
@@ -110,3 +129,29 @@
     (ws/find-game! :db "new-game" "bob" :bob-channel)
     (is (= {:alice-channel "alice" :bob-channel "bob"}
            (get-in @ws/games [:games "new-game" :channel-players])))))
+
+(deftest beginning-a-game-does-not-persist-live-websocket-state
+  (let [persisted (atom nil)
+        sent-to (atom nil)
+        game-state {:key "pond-life"
+                    :invocation {:players ["alice" "bob"]}
+                    :game {:state {:player-turn {:player "alice"}}}
+                    :history []
+                    :chat []
+                    :channels #{:alice-channel :observer-channel}
+                    :channel-players {:alice-channel "alice"}}]
+    (reset! ws/games {:games {"pond-life" game-state}})
+    (with-redefs [ws/complete-game-state identity
+                  persist/load-game (fn [& _] @persisted)
+                  ws/send-channels! (fn [channels _] (reset! sent-to channels))
+                  persist/stage-game-transition! (fn [_ record token]
+                                                   (reset! persisted (assoc record :transition-id token)))
+                  persist/mark-game-transition-committing! (fn [& _] true)
+                  persist/commit-game-transition! (fn [& _] true)]
+      (ws/begin-game! :db "pond-life" "alice"))
+    (is (= (:channels game-state) @sent-to))
+    (is (string? (:transition-id @persisted)))
+    (is (= (-> game-state
+               (dissoc :channels :channel-players)
+               (assoc :created-by "alice" :game-type "organism"))
+           (dissoc @persisted :transition-id)))))

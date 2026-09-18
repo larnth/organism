@@ -9,7 +9,7 @@ describe("App", () => {
   it("shows a loading state before the projection arrives", () => {
     const loadGame = vi.fn(() => new Promise<typeof observerProjection>(() => undefined));
     render(<App gameId="pond-life" loadGame={loadGame} />);
-    expect(screen.getByText("Preparing the specimen…")).toBeInTheDocument();
+    expect(screen.getByText("Preparing the table…")).toBeInTheDocument();
   });
 
   it("renders a fetched observer projection", async () => {
@@ -25,13 +25,12 @@ describe("App", () => {
   });
 
   it("keeps the board visible while reconnecting", async () => {
-    const loadGame = vi.fn().mockResolvedValue(observerProjection);
-    const loadUpdates = vi.fn().mockRejectedValue(new Error("offline"));
+    const loadGame = vi.fn().mockResolvedValueOnce(observerProjection).mockRejectedValue(new Error("offline"));
     render(
       <App
         gameId="pond-life"
         loadGame={loadGame}
-        loadUpdates={loadUpdates}
+
         pollInterval={1}
       />,
     );
@@ -70,6 +69,6 @@ describe("App", () => {
 
     fireEvent.click(screen.getByRole("button", { name: action.label }));
     expect(await screen.findByText(/Revision 9/)).toBeInTheDocument();
-    expect(submitAction).toHaveBeenCalledWith("pond-life", action.actionId, 8);
+    expect(submitAction).toHaveBeenCalledWith("pond-life", action.actionId, 8, expect.any(String));
   });
 });

@@ -15,6 +15,7 @@
    [cljs.reader :as reader]
    [ajax.core :as ajax-core]
    [organism.base :as base]
+   [organism.lobby :as lobby]
    [organism.websockets :as ws]))
 
 ;; ── Shared atoms ────────────────────────────────────────────────────────────
@@ -137,7 +138,7 @@
     :or {search? true placeholder "search players..."}}]
   (let [suggestions (get @player-suggestions slot-id [])
         hl @suggestion-highlight]
-    [:div {:style {:position "relative"}}
+    [:div {:class "organism-player-search" :style {:position "relative"}}
      [:input
       {:value value
        :placeholder placeholder
@@ -146,7 +147,9 @@
                :border-color (or color "#333")
                :border "3px solid"
                :font-size "1.5em" :letter-spacing "6px"
-               :margin "2px 0px" :width "366px" :padding "10px 30px"}
+               :box-sizing "border-box"
+               :margin "2px 0px" :width "100%" :max-width "366px"
+               :padding "10px 30px"}
        :on-focus (fn [_]
                    (when on-focus (on-focus))
                    (when search?
@@ -185,9 +188,11 @@
              (fetch-suggestions! slot-id v game-type))))}]
      ;; Autocomplete dropdown
      (when (and (= @active-suggestion slot-id) (seq suggestions))
-       [:div {:style {:position "absolute" :top "100%" :left "30px" :z-index 100
+       [:div {:class "organism-player-suggestions"
+              :style {:position "absolute" :top "100%" :left "0" :z-index 100
                       :background "#222" :border "1px solid #555" :border-radius "8px"
-                      :max-height "240px" :overflow-y "auto" :width "366px"}}
+                      :box-sizing "border-box" :max-height "240px" :overflow-y "auto"
+                      :width "100%" :max-width "366px"}}
         (for [[i suggestion] (map-indexed vector suggestions)
               :let [highlighted? (= i hl)
                     sname (:name suggestion)
@@ -299,19 +304,15 @@
                      #(.reload js/location)))
 
 (defn request-join!
-  "Take a seat in an open lobby straight from the list. If that fills the last
-   seat the server starts the game, and we go to it rather than back to a lobby
-   that no longer exists."
-  [play-prefix game-key index]
+  "Take a seat in an open lobby straight from the list, then enter that lobby."
+  [play-prefix create-prefix game-key index]
   (ajax-core/POST (game-url play-prefix game-key "/join")
     {:params          {:index index}
      :format          :transit
      :response-format :transit
-     :handler         (fn [response]
-                        (if (:begun response)
-                          (set! (.-location js/window)
-                                (game-url play-prefix game-key ""))
-                          (.reload js/location)))
+     :handler         (fn [_]
+                        (set! (.-location js/window)
+                              (game-url create-prefix game-key "")))
      :error-handler   (fn [err]
                         (js/alert (str "Could not join " game-key ": "
                                        (or (get-in err [:response :error])
@@ -358,16 +359,17 @@
    :link-prefix — URL prefix for the game key (e.g. \"/organism/create/\")
    :current-player — logged-in player name (highlighted)
    :font-family — optional font for the title (default monospace)"
-  [{:keys [game-key invocation colors link-prefix current-player font-family
+  [{:keys [game-key invocation colors link-prefix current-player creator font-family
            on-delete on-join]
     :or {font-family "monospace"}}]
   (let [{:keys [players ring-count description]} invocation
-        first-color (or (first colors) "#445")]
-    [:div
-     [:div {:style {:margin "10px 20px" :padding "10px 0px"}}
+        first-color (or (first colors) "#445")
+        {:keys [can-join?]} (lobby/permissions creator current-player players)]
+    [:article.organism-game-card.organism-open-game-card
+     [:div.organism-game-card-main {:style {:margin "10px 20px" :padding "10px 0px"}}
       ;; Game name button
       [:span
-       [:a {:href (game-url link-prefix game-key "")
+       [:a.organism-game-card-title {:href (game-url link-prefix game-key "")
             :style {:color "#fff"
                     :border-radius "15px"
                     :background first-color
@@ -378,13 +380,13 @@
                     :text-decoration "none"}}
         game-key]]
       (when ring-count
-        [:span {:style {:margin "0px 20px" :color "#aaa"}}
+        [:span.organism-game-card-meta {:style {:margin "0px 20px" :color "#aaa"}}
          (str " " ring-count " rings ")])
       ;; Player slots
       (for [[i [game-player color]]
             (map-indexed vector (map vector players colors))]
         ^{:key i}
-        [:span
+        [:span.organism-player-chip
          (if (string/blank? game-player)
            ;; Open slot — clicking it seats you here and there is nothing else
            ;; to decide, so it acts rather than sending you to the create page.
@@ -394,17 +396,16 @@
                              :color (or color "#445")
                              :text-decoration "none"
                              :font-family font-family}]
-             (if on-join
-               [:button {:title (str "take this seat"
-                                     (when current-player (str " as " current-player)))
+             (if (and on-join can-join?)
+               [:button.organism-seat-action {:title (str "take this seat"
+                                      (when current-player (str " as " current-player)))
                          :on-click (fn [_] (on-join i))
                          :style (merge slot-style {:background "transparent"
                                                    :cursor "pointer"})}
                 "join"]
-               [:a {:href (game-url link-prefix game-key "") :style slot-style}
-                "open"]))
+               [:span.organism-open-seat {:style slot-style} "open"]))
            ;; Filled slot
-           [:a {:href (game-url link-prefix game-key "")
+           [:a.organism-player-link {:href (game-url link-prefix game-key "")
                 :style (if (= game-player current-player)
                          {:color "#fff"
                           :border-radius "20px"
@@ -428,7 +429,7 @@
                        :history-count 0
                        :on-delete on-delete}]]
      (when (and description (not (string/blank? description)))
-       [:div {:style {:margin "0px 40px" :color "#aaa"}}
+       [:div.organism-game-card-description {:style {:margin "0px 40px" :color "#aaa"}}
         description])]))
 
 (defn open-games-section
@@ -440,8 +441,8 @@
    :font-family    — optional font family"
   [{:keys [games link-prefix current-player colors-fn font-family on-delete on-join]}]
   (when (seq games)
-    [:div {:style {:margin "20px 40px"}}
-     [:h2
+    [:section.organism-game-section {:style {:margin "20px 40px"}}
+     [:h2.organism-section-title
       [:span {:title "Click an open slot to join the game"} "OPEN"]]
      (for [{:keys [key invocation] :as game} games
            :let [colors (when colors-fn (colors-fn invocation))]]
@@ -451,6 +452,7 @@
                         :colors colors
                         :link-prefix link-prefix
                         :current-player current-player
+                        :creator (:created-by game)
                         :font-family font-family
                         :on-delete (when on-delete #(on-delete game))
                         :on-join (when on-join (fn [index] (on-join game index)))}])]))
@@ -514,9 +516,10 @@
                      (cond-> []
                        created        (conj (str "created " (format-last-move (quot created 1000))))
                        last-move-time (conj (str "last move " (format-last-move last-move-time)))))]
-    [:div {:style {:margin "10px 20px" :padding "10px 0px"}}
+    [:article.organism-game-card.organism-active-game-card
+     {:style {:margin "10px 20px" :padding "10px 0px"}}
      [:span
-      [:a {:href (game-url link-prefix game-key "")
+      [:a.organism-game-card-title {:href (game-url link-prefix game-key "")
            :style {:color "#fff"
                    :border-radius "15px"
                    :background current-color
@@ -527,11 +530,11 @@
                    :text-decoration "none"}}
        game-key]]
      (when (and description (not (string/blank? description)))
-       [:span {:style {:margin "0px 20px" :color "#888"
+       [:span.organism-game-card-description {:style {:margin "0px 20px" :color "#888"
                        :font-style "italic"}}
         description])
      (when round
-       [:span {:style {:color "#fff"
+       [:span.organism-game-status {:style {:color "#fff"
                        :border-radius "20px"
                        :background next-color
                        :padding "7px 20px"
@@ -540,7 +543,7 @@
                        :font-family font-family}}
         (str "round " (inc (or round 0)))])
      (when (seq time-parts)
-       (into [:span {:style {:display "inline-block" :vertical-align "middle"
+       (into [:span.organism-game-timestamps {:style {:display "inline-block" :vertical-align "middle"
                              :margin "0px 20px" :color "#888" :font-size "0.85em"
                              :line-height "1.35"}
                      :title time-title}]
@@ -549,8 +552,8 @@
      (for [game-player players
            :let [color (get player-colors game-player)]]
        ^{:key game-player}
-       [:span
-        [:a {:href (player-url player-link-prefix game-player)
+       [:span.organism-player-chip
+        [:a.organism-player-link {:href (player-url player-link-prefix game-player)
              :style (if (= game-player current-player)
                       {:color "#fff"
                        :border-radius "20px"
@@ -604,13 +607,13 @@
                                        :font-family font-family}])
         section   (fn [label tip items highlight-fn]
                     (when (seq items)
-                      [:div {:style {:margin "20px 40px"}}
-                       [:h2 (if tip [:span {:title tip} label] label)]
+                      [:section.organism-game-section {:style {:margin "20px 40px"}}
+                       [:h2.organism-section-title (if tip [:span {:title tip} label] label)]
                        (for [{:keys [key] :as g} items]
                          ^{:key key}
                          [game-card g (highlight-fn g)])]))]
-    [:div {:style {:padding "20px" :color "#eee"}}
-     [:div {:style {:color "#fff"
+    [:main.organism-community-page.organism-observe-page {:style {:padding "20px" :color "#eee"}}
+     [:header.organism-community-header {:style {:color "#fff"
                     :border-radius "50px"
                     :letter-spacing "8px"
                     :font-family (or font-family "monospace")
@@ -620,7 +623,7 @@
       [:h1 [:a {:style {:color "#fff" :text-decoration "none"}
                 :href (or home-path "/")} title]]]
      (if (empty? games)
-       [:p {:style {:margin "30px 40px" :color "#888"}} "no games yet"]
+       [:p.organism-empty-state {:style {:margin "30px 40px" :color "#888"}} "No games yet."]
        [:div
         (section "ACTIVE"   "A solid color row shows whose turn it is." active   :current-player)
         (section "INACTIVE" "No move in over a week."                   inactive :current-player)
@@ -629,8 +632,8 @@
 ;; ── Player stats page ──────────────────────────────────────────────────────
 
 (def ^:private stat-column-hues
-  {:playing (rand) :complete (rand) :won (rand) :created (rand)
-   :glicko (rand) :elo (rand)})
+  {:playing 0.23 :complete 0.55 :won 0.12 :created 0.91
+   :glicko 0.23 :elo 0.55})
 
 (defn- col-color
   [hue ratio]
@@ -639,7 +642,7 @@
 
 (defn- stat-cell
   [label value color]
-  [:span
+  [:span.organism-stat-cell
    {:style {:display "inline-flex"
             :flex-direction "row"
             :align-items "baseline"
@@ -656,7 +659,7 @@
   "The headline number. Glicko-2 is a rating *and* a deviation, and showing the
    deviation is the whole point — 1600 ±40 and 1600 ±300 are different claims."
   [label value deviation color]
-  [:span
+  [:span.organism-rating-cell
    {:style {:display "inline-flex"
             :flex-direction "row"
             :align-items "baseline"
@@ -700,8 +703,8 @@
                        (constantly 0))))
         glicko-ratio (spread :glicko)
         elo-ratio    (spread :elo)]
-    [:div {:style {:padding "20px" :color "#eee"}}
-     [:div {:style {:color "#fff"
+    [:main.organism-community-page.organism-players-page {:style {:padding "20px" :color "#eee"}}
+     [:header.organism-community-header {:style {:color "#fff"
                     :border-radius "50px"
                     :letter-spacing "8px"
                     :font-family (or font-family "monospace")
@@ -712,22 +715,24 @@
                 :href (or home-path "/")} title]]]
      (if (empty? stats)
        [:p {:style {:margin "30px 40px" :color "#888"}} "no players yet"]
-       [:div {:style {:margin "20px 40px"}}
-        [:p {:style {:margin "10px 20px 25px" :color "#888" :font-size "0.8em"
+       [:div.organism-leaderboard {:style {:margin "20px 40px"}}
+        [:details.organism-rating-help
+         [:summary "How ratings work"]
+         [:p {:style {:margin "10px 20px 25px" :color "#888" :font-size "0.8em"
                      :font-family "monospace" :line-height "1.6em"}}
          "glicko — rating with the uncertainty around it, ranked by what a record establishes rather than by the number itself"
          [:br]
          "elo — the classic: a fixed step per game, no sense of its own confidence"
          [:br]
-         "fewer than five finished games and a rating is still a guess, marked new and sorted below the rest"]
+          "fewer than five finished games and a rating is still a guess, marked new and sorted below the rest"]]
         (for [{:keys [key color active complete wins created
                       elo glicko rd rated provisional]} stats]
           ^{:key key}
-          [:div {:style {:margin "10px 20px" :padding "10px 0px"
+          [:article.organism-player-stat-card {:style {:margin "10px 20px" :padding "10px 0px"
                          :display "flex" :align-items "center"
                          :flex-wrap "wrap" :gap "4px"
                          :opacity (if provisional "0.6" "1")}}
-           [:a {:href (player-url player-link-prefix key)
+           [:a.organism-player-stat-name {:href (player-url player-link-prefix key)
                 :style {:color "#fff"
                         :border-radius "15px"
                         :background (or color "#444")
@@ -916,7 +921,8 @@
    `emphasis` is the player to call out (whose turn it is, or the winner);
    when that is the viewer the whole row takes their colour."
   [{:keys [game-key href player-prefix players player-colors emphasis viewer
-           note tooltip font-family deletion history-count on-delete on-keep]}]
+           note tooltip font-family deletion history-count on-delete on-keep
+           show-turn?]}]
   (let [viewer-color (get player-colors viewer "#445")
         base (if (and emphasis (= viewer emphasis))
                {:background viewer-color
@@ -925,16 +931,16 @@
                 :border-radius "10px"}
                {:margin "10px 20px"
                 :padding "10px 0px"})]
-    [:div
+    [:article.organism-game-card.organism-player-game-card
      ;; A marked row gets outlined so it reads as pending rather than gone.
      {:style (if deletion
                (merge base {:border "1px dashed #6A3A3A"
                             :border-radius "10px"
                             :padding "10px 12px"})
                base)}
-     [:span
+     [:span.organism-game-card-heading
       (when tooltip {:title tooltip})
-      [:a
+      [:a.organism-game-card-title
        {:href href
         :style {:color "#fff"
                 :border-radius "15px"
@@ -946,12 +952,19 @@
                 :text-decoration "none"}}
        game-key]]
      (when note
-       [:span {:style {:margin "0px 20px"}} note])
+       [:span.organism-game-card-meta {:style {:margin "0px 20px"}} note])
+     (when (and show-turn? emphasis)
+       [:span.organism-game-turn
+        {:class (when (lobby/same-player? viewer emphasis)
+                  "organism-game-turn--mine")}
+        (if (lobby/same-player? viewer emphasis)
+          "YOUR TURN"
+          (str emphasis "’S TURN"))])
      (for [game-player players]
        (let [player-color (get player-colors game-player "#445")]
          ^{:key game-player}
-         [:span
-          [:a
+         [:span.organism-player-chip
+          [:a.organism-player-link
            {:href (player-url player-prefix game-player)
             :style (if (= game-player emphasis)
                      {:color "#fff"
@@ -989,10 +1002,10 @@
    :tooltip-fn  — (fn [record] → hover text for the game name)"
   [{:keys [title tooltip games viewer play-prefix player-prefix
            colors-fn emphasis-fn note-fn tooltip-fn font-family
-           on-delete on-keep]}]
+           on-delete on-keep show-turn?]}]
   (when (seq games)
-    [:div {:style {:margin "20px 40px"}}
-     [:h2 (if tooltip [:span {:title tooltip} title] title)]
+    [:section.organism-game-section {:style {:margin "20px 40px"}}
+     [:h2.organism-section-title (if tooltip [:span {:title tooltip} title] title)]
      (for [{:keys [game players] :as record} games]
        ^{:key game}
        [game-row
@@ -1006,6 +1019,7 @@
          :note          (when note-fn (note-fn record))
          :tooltip       (when tooltip-fn (tooltip-fn record))
          :font-family   font-family
+         :show-turn?    show-turn?
          :deletion      (:deletion record)
          :history-count (:history-count record)
          :on-delete     (when on-delete #(on-delete record))
@@ -1064,7 +1078,7 @@
                   (reset! open? false)
                   (.removeEventListener js/document "click" dismiss))]
     (fn [{:keys [player color label home-path font-family on-color random-color]}]
-      [:div
+      [:header.organism-profile-header
        {:style {:color "#fff"
                 :border-radius "50px"
                 :cursor (when on-color "pointer")
@@ -1091,7 +1105,7 @@
                  :on-click (fn [event] (.stopPropagation event))}
              player]]
        (when label
-         [:div {:style {:font-size "1.3em" :letter-spacing "5px" :margin "10px 0px"}}
+         [:div.organism-profile-label {:style {:font-size "1.3em" :letter-spacing "5px" :margin "10px 0px"}}
           label])
        (when @open?
          [colour-picker {:color color
@@ -1138,7 +1152,9 @@
         ;; Taking a seat needs the <play-prefix>/:play/join route, so it is
         ;; opt-in the same way deletion is.
         on-join   (when joinable?
-                    (fn [record index] (request-join! play-prefix (game-key record) index)))
+                    (fn [record index]
+                      (request-join! play-prefix (or create-prefix play-prefix)
+                                     (game-key record) index)))
         section   (fn [title tooltip rows emphasis-fn extra]
                     [games-section
                      (merge
@@ -1154,7 +1170,7 @@
                        :tooltip-fn    tooltip-fn
                        :font-family   font-family}
                       extra)])]
-    [:div {:style {:padding "20px" :color "#eee"}}
+    [:main.organism-community-page.organism-player-games-page {:style {:padding "20px" :color "#eee"}}
      [player-games-banner {:player player :color color :label label
                            :home-path home-path :font-family font-family
                            :on-color on-color :random-color random-color}]
@@ -1166,10 +1182,10 @@
                           :on-delete on-delete
                           :on-join on-join}]
      (section "ACTIVE"
-              (str "A solid color row indicates it is your turn in that game.\n"
+              (str "Each card names whose turn it is.\n"
                    "The icon on the tab for this page will turn green when it is your turn.")
               active :current-player
-              {:on-delete on-delete :on-keep on-keep})
+              {:on-delete on-delete :on-keep on-keep :show-turn? true})
      (section "COMPLETE" nil (reverse completed) :winner nil)
      (when (and (empty? open) (empty? active) (empty? completed))
        (or empty-content

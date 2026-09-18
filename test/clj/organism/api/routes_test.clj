@@ -1,9 +1,11 @@
 (ns organism.api.routes-test
   (:require
    [clojure.test :refer :all]
+   [clojure.string :as str]
    [muuntaja.core :as m]
    [organism.api.actions :as actions]
    [organism.examples :as examples]
+   [organism.game :as game]
    [organism.middleware.formats :as formats]
    [organism.persist :as persist]
    [organism.routes.organism :as routes]
@@ -119,6 +121,27 @@
       (is (= "waiting" (:status body)))
       (is (= false (get-in body [:viewer :canAct]))))))
 
+(deftest private-http-projections-do-not-treat-a-bot-name-as-membership
+  (with-redefs [persist/load-game (constantly nil)
+                persist/find-open-game
+                (fn [_ game-id]
+                  {:key game-id
+                   :visibility "private"
+                   :created-by "alice"
+                   :invocation {:players ["alice" "OBO-A"]
+                                :player-count 2
+                                :ring-count 4
+                                :description "member-only details"}
+                   :readiness {"alice" true}
+                   :chat [{:player "alice" :message "member-only chat"}]})]
+    (let [response ((api-app) (json-request "/api/v1/organism/games/private-room" "OBO-A"))
+          body (decode-json response)]
+      (is (= 200 (:status response)))
+      (is (= ["Occupied" "Occupied"] (get-in body [:invocation :players])))
+      (is (nil? (get-in body [:invocation :description])))
+      (is (empty? (:chat body)))
+      (is (nil? (:createdBy body))))))
+
 (deftest modern-player-page-preserves-the-game-id-in-the-client-route
   (let [response (routes/modern-play-page
                   {:path-params {:play "pond life/alpha"}})]
@@ -126,12 +149,56 @@
     (is (= "/modern/?game=pond%20life%2Falpha"
            (get-in response [:headers "Location"])))))
 
+(deftest modern-session-bootstrap-uses-server-identity-and-field-limits
+  (with-redefs [persist/canonical-player-name (fn [_ player] (when (= player "alice") player))]
+   (doseq [player [nil "alice"]]
+    (let [response ((api-app) (json-request "/api/v1/organism/session" player))
+          body (when (= 200 (:status response)) (decode-json response))]
+      (is (= 200 (:status response)))
+      (is (= player (:player body)))
+      (is (= [(or player "") ""] (get-in body [:defaults :players])))
+      (is (= 4 (get-in body [:defaults :ring-count])))
+      (is (= "open" (get-in body [:defaults :visibility])))
+      (is (= (vec (range 1 11)) (get-in body [:limits :playerCounts])))
+      (is (= (vec (range 3 8)) (get-in body [:limits :ringCounts])))
+      (is (= 7 (count (get-in body [:defaults :colors]))))
+      (is (some #(= "OBO" (:name %)) (:bots body)))
+      (is (not (re-find #"password|session-key|csrf-token" (str (:body response)))))))))
+
 (def command-game-state
   {:key "canonical-game"
    :invocation {:players ["orb" "mass"]}
    :game examples/two-player-close
    :history [examples/two-player-close]
    :chat []})
+
+;; Route units emulate the atomic persistence seam; mutation-test uses Mongo.
+(use-fixtures :each
+  (fn [run]
+    (with-redefs [persist/repair-mutation! (fn [& _])
+                  persist/commit-mutation!
+                  (fn [db key current next-game receipt _]
+                    (persist/update-state! db key (:state next-game))
+                    (persist/complete-command! db key (:command-id receipt)
+                                               (count (:history current)))
+                    (persist/load-game db key))]
+      (run))))
+
+(defn- advance-to-phase
+  [initial-game requested-phase]
+  (loop [current initial-game
+         remaining 100]
+    (let [actor (game/current-player current)
+          context (actions/action-context current actor)]
+      (cond
+        (= requested-phase (:phase context)) (:game context)
+        (zero? remaining) (throw (ex-info "phase not reached" {:phase requested-phase}))
+        :else (let [actions (:actions context)
+                    preferred (some #(when (str/includes? (str/lower-case (:label %)) "move") %)
+                                    actions)
+                    action-id (:actionId (or preferred (first actions)))
+                    resolution (actions/resolve-current-action current actor action-id)]
+                (recur (:game (first (:matches resolution))) (dec remaining)))))))
 
 (deftest persists-a-legal-command-and-returns-the-new-projection
   (let [stored (atom command-game-state)
@@ -171,6 +238,42 @@
         (is (= 1 (count @player-updates)))
         (is (not= examples/two-player-close (:game @stored)))))))
 
+(deftest persists-a-source-and-destination-as-one-revision
+  (let [move-game (advance-to-phase (:game command-game-state) :move-from)
+        compound-game-state (assoc command-game-state
+                                   :game move-game
+                                   :history [move-game])
+        actor (game/current-player move-game)
+        stored (atom compound-game-state)
+        source (first (:actions (actions/action-context
+                                 move-game
+                                 actor)))
+        target (first (:nextActions source))]
+    (is (some? target))
+    (with-redefs [persist/load-game (fn [_ _] @stored)
+                  persist/find-command (constantly nil)
+                  persist/reserve-command! (fn [_ record]
+                                             {:reserved? true :record record})
+                  persist/update-state! (fn [_ _ state]
+                                          (swap! stored
+                                                 (fn [game-state]
+                                                   (-> game-state
+                                                       (assoc-in [:game :state] state)
+                                                       (update :history conj state)))))
+                  persist/update-player-games! (fn [& _])
+                  persist/complete-game! (fn [& _]
+                                           (throw (ex-info "not complete" {})))
+                  persist/complete-command! (fn [& _])]
+      (let [response ((api-app)
+                      (command-request "canonical-game" actor
+                                       {:actionId [(:actionId source) (:actionId target)]
+                                        :expectedRevision 0
+                                        :commandId "compound-command"}))
+            body (decode-json response)]
+        (is (= 200 (:status response)))
+        (is (= 1 (:revision body)))
+        (is (= 2 (count (:history @stored))))))))
+
 (deftest retries-a-completed-command-without-applying-it-again
   (let [writes (atom 0)
         existing {:game-key "canonical-game"
@@ -182,6 +285,7 @@
                   :revision 1}]
     (with-redefs [persist/load-game (constantly command-game-state)
                   persist/find-command (fn [_ _ _] existing)
+                  persist/update-player-games! (fn [& _])
                   persist/update-state! (fn [& _] (swap! writes inc))]
       (let [response ((api-app)
                       (command-request "canonical-game" "orb"

@@ -4,6 +4,7 @@
    [clojure.string :as string]
    [cljs.pprint :refer (pprint)]
    [cljs.reader :as reader]
+   [ajax.core :as ajax-core]
    [goog.events :as events]
    [goog.history.EventType :as HistoryEventType]
    [reitit.core :as reitit]
@@ -13,6 +14,9 @@
    [organism.game :as game]
    [organism.choice :as choice]
    [organism.board :as board]
+   [organism.lobby :as lobby]
+   [organism.turn-notification :as turn-notification]
+   [organism.interaction :as interaction]
    [organism.dom :as dom]
    [organism.ajax :as ajax]
    [organism.components :as components]
@@ -60,6 +64,18 @@
 
 (defonce session (r/atom {:page :home}))
 (defonce chat (r/atom []))
+(defonce chat-draft (r/atom ""))
+(defonce chat-submission (r/atom nil))
+(defonce chat-feedback (r/atom nil))
+(defonce ^:private chat-delivery-timer (atom nil))
+(defonce lobby-readiness (r/atom {}))
+(defonce lobby-visibility (r/atom "open"))
+(defonce lobby-bots (r/atom #{}))
+(defonce lobby-feedback (r/atom nil))
+(defonce lobby-launched? (r/atom false))
+(defonce game-loading?
+  (r/atom (and (exists? js/playKey)
+               (not (string/blank? js/playKey)))))
 
 (defonce history-advance
   (r/atom nil))
@@ -97,6 +113,12 @@
 (defonce game-state
   (r/atom empty-game-state))
 
+(defonce create-setup-open? (r/atom false))
+(defonce create-meta-open? (r/atom false))
+(defonce game-meta-open? (r/atom false))
+(defonce game-details-open? (r/atom false))
+(defonce player-drafts (r/atom {}))
+
 (defonce clear-state
   (r/atom (game/initial-state board/default-player-order)))
 
@@ -125,6 +147,17 @@
 ;; phase falls back to it so that after committing a choice the element still
 ;; under the cursor immediately offers its next options (no move-out-and-back-in).
 (defonce pointer-space (r/atom nil))
+
+;; Touch devices do not have hover. Keep a tapped action source selected until
+;; its destination is chosen, tapped again, or authoritative state changes.
+(defonce selected-action-source (r/atom nil))
+
+(defn- select-action-source!
+  [space]
+  (swap! selected-action-source
+         (fn [selected]
+           (when-not (= space (:space selected))
+             {:space space :kind :element}))))
 
 ;; In-progress grow payment, or nil. Food is a shared pool across all growers,
 ;; so the player spends the cost one coin at a time by clicking growers; when the
@@ -761,6 +794,38 @@
 
 (def highlight-element-stroke {:ratio 0.04 :color "#ccc"})
 
+(defn can-act-now?
+  []
+  (let [{:keys [player game cursor]} @game-state]
+    (interaction/can-act? player game cursor)))
+
+(defn clear-provisional-interaction!
+  []
+  (cancel-from-hover-clear!)
+  (reset! introduction empty-introduction)
+  (reset! food-source {})
+  (doseq [selection [action-hover from-hover dest-hover pointer-space
+                     selected-action-source grow-pay action-popup intro-hover]]
+    (reset! selection nil)))
+
+(defn interaction-context
+  [{:keys [player game cursor]}]
+  [player cursor (game/current-player game)
+   (get-in game [:state :round]) (get-in game [:state :winner])])
+
+;; A turn handoff, replay navigation, or reconnect must not carry a local
+;; placement/source/payment selection into someone else's turn.
+(add-watch game-state ::interaction-context
+           (fn [_ _ before after]
+             (when (not= (interaction-context before) (interaction-context after))
+               (clear-provisional-interaction!))))
+
+(defn guard-play-click!
+  [event]
+  (when-not (can-act-now?)
+    (.preventDefault event)
+    (.stopPropagation event)))
+
 (defn choose-food-source!
   [space]
   (swap! food-source update space inc))
@@ -789,21 +854,24 @@
 
 (defn send-state!
   [state complete]
-  (ws/send-transit-message!
-   {:type "game-state"
-    :game state
-    :complete complete}))
+  (when (can-act-now?)
+    (ws/send-transit-message!
+     {:type "game-state"
+      :game state
+      :complete complete})))
 
 (defn send-reset!
   [state]
-  (ws/send-transit-message!
-   {:type "history"
-    :game state}))
+  (when (can-act-now?)
+    (ws/send-transit-message!
+     {:type "history"
+      :game state})))
 
 (defn send-clear!
   []
-  (ws/send-transit-message!
-   {:type "clear"}))
+  (when (can-act-now?)
+    (ws/send-transit-message!
+     {:type "clear"})))
 
 (defn send-choice!
   [choices match complete]
@@ -826,6 +894,14 @@
   (reset! board-invocation invocation)
   (apply-invocation! invocation)
   (components/send-create! invocation))
+
+(defn send-ready!
+  [ready?]
+  (ws/send-transit-message! {:type "lobby-ready" :ready ready?}))
+
+(defn send-kick!
+  [index]
+  (ws/send-transit-message! {:type "lobby-kick" :index index}))
 
 (def send-open-game! components/send-open-game!)
 
@@ -859,7 +935,7 @@
 
 (defn update-chat
   [chat message]
-  (conj chat message))
+  (lobby/append-chat-once chat message))
 
 (defn update-game
   [game-state message]
@@ -1003,11 +1079,13 @@
   [history cursor]
   (let [total (count history)]
     [:div
-      {:style
+      {:class "organism-history-controls"
+       :style
        {:margin "0px 0px 0px 0px"}}
      [:h3 "history"]
      [:svg
-      {:width 300
+      {:class "organism-history-svg"
+       :width 300
        :height 50
        :style
        {:margin "10px 0px 0px 30px"}}
@@ -1073,37 +1151,110 @@
 
 (def chat-window 15)
 
+(defn- chat-time-label
+  [unix-time]
+  (when (number? unix-time)
+    (.toLocaleTimeString (js/Date. (* unix-time 1000))
+                         js/undefined
+                         #js {:hour "numeric" :minute "2-digit"})))
+
 (defn chat-list
   [player-colors chat]
-  [:ul
-   (let [total (count chat)
-         visible (drop (- total chat-window) chat)]
-     (for [[i message] (map-indexed vector visible)]
-       (let [player (:player message)
-             color (get player-colors player "black")]
-         ^{:key i}
-         [:li
-          {:style {:color color}}
-          player ": " (:message message)])))])
+  (let [total (count chat)
+        visible (drop (max 0 (- total chat-window)) chat)]
+    [:ol.organism-discussion-list
+     (if (seq visible)
+       (for [[i message] (map-indexed vector visible)]
+         (let [player (:player message)
+               color (get player-colors player "#899197")
+               own? (and (seq js/playerKey) (lobby/same-player? player js/playerKey))]
+           ^{:key (or (:id message) (:client-id message) i)}
+           [:li.organism-discussion-message {:class (when own? "is-own")}
+            [:div.organism-discussion-avatar
+             {:style {:--message-color color} :aria-hidden "true"}
+             (-> player first str string/upper-case)]
+            [:div.organism-discussion-bubble
+             [:div.organism-discussion-meta
+              [:strong player]
+              (when-let [label (chat-time-label (:time message))]
+                [:time {:date-time (.toISOString (js/Date. (* (:time message) 1000)))} label])]
+             [:p (:message message)]]]))
+       [:li.organism-discussion-empty
+        [:strong "No messages yet"]
+        [:span "Start the conversation without leaving the board."]])]))
+
+(defn- submit-chat!
+  []
+  (let [message @chat-draft]
+    (cond
+      (string/blank? message)
+      (reset! chat-feedback {:kind :error :message "Write a message before sending."})
+
+      (> (count message) 1000)
+      (reset! chat-feedback {:kind :error :message "Messages must be 1000 characters or fewer."})
+
+      :else
+      (let [client-id (str (random-uuid))]
+        (if (ws/try-send-transit-message! {:type "chat"
+                                           :message message
+                                           :client-id client-id})
+          (do
+            (reset! chat-submission {:client-id client-id :message message})
+            (reset! chat-feedback {:kind :pending :message "Sending…"})
+            (when-let [timer @chat-delivery-timer]
+              (.clearTimeout js/window timer))
+            (reset! chat-delivery-timer
+                    (.setTimeout js/window
+                                 (fn []
+                                   (when (= client-id (:client-id @chat-submission))
+                                     (reset! chat-delivery-timer nil)
+                                     (reset! chat-submission nil)
+                                     (reset! chat-feedback
+                                             {:kind :error
+                                              :message "Delivery was not confirmed. Your message is still here—try again."})))
+                                 8000)))
+          (reset! chat-feedback
+                  {:kind :error
+                   :message "Not connected. Your message is still here—try again after reconnecting."}))))))
 
 (defn chat-input
   []
-  (if js/playerKey
-    (let [value (r/atom nil)]
-      (fn []
-        [:input.form-control
-         {:type :text
-          :placeholder "respond"
-          :value @value
-          :on-change #(reset! value (-> % .-target .-value))
-          :on-key-down
-          #(when (= (.-keyCode %) 13)
-             (ws/send-transit-message!
-              {:type "chat"
-               :player js/playerKey
-               :message @value})
-             (reset! value nil))}]))
-    []))
+  (if (and (exists? js/playerKey) (not (string/blank? js/playerKey)))
+    [:form.organism-discussion-composer
+     {:on-submit (fn [event]
+                   (.preventDefault event)
+                   (submit-chat!))}
+     [:label {:for "organism-discussion-message"} "Message"]
+     [:div.organism-discussion-compose-row
+      [:input#organism-discussion-message
+       {:type "text"
+        :placeholder "Write to the table…"
+        :maxlength 1000
+        :disabled (some? @chat-submission)
+        :value @chat-draft
+        :on-change #(do
+                      (reset! chat-draft (-> % .-target .-value))
+                      (reset! chat-feedback nil))}]
+      [:button.organism-primary-button
+       {:type "submit"
+        :disabled (or (some? @chat-submission) (string/blank? @chat-draft))}
+       (if @chat-submission "SENDING" "SEND")]]
+     (when @chat-feedback
+       [:p.organism-discussion-feedback
+        {:class (name (:kind @chat-feedback)) :role "status" :aria-live "polite"}
+        (:message @chat-feedback)])]
+    [:p.organism-discussion-readonly "Watching only · seated players can post messages."]))
+
+(defn discussion-panel
+  [player-colors chat heading eyebrow]
+  [:section.organism-discussion-panel
+   [:header.organism-discussion-heading
+    [:div
+     [:span.organism-eyebrow eyebrow]
+     [:h3 heading]]
+    [:span.organism-live-indicator "LIVE"]]
+   [chat-list player-colors chat]
+   [chat-input]])
 
 (defn description-panel
   [player-color description]
@@ -1151,7 +1302,8 @@
    chat]
   (let [player-color (get player-colors (-> state :player-turn :player) (first colors))]
     [:div
-     {:style
+     {:class "organism-chat-panel"
+      :style
       {:margin "20px"}}
      [round-banner
       player-color
@@ -1163,10 +1315,7 @@
       [scoreboard turn-order organism-victory colors player-captures mutations state]
       [history-controls history cursor]
       [help-panel player-color]
-      [:h3 "discussion"]
-      [chat-list player-colors chat]
-      [:br]
-      [chat-input]]]))
+      [discussion-panel player-colors chat "Discussion" "GAME CHAT"]]]))
 
 (defn highlight-circle
   [x y radius color on-click]
@@ -1288,7 +1437,8 @@
                  r (* radius (if hovered? 1.15 1.1))]
              ^{:key space}
              [:circle
-              {:cx x :cy y
+              {:data-starting-space (pr-str space)
+               :cx x :cy y
                :r r
                :stroke stroke-c
                :stroke-width stroke-w
@@ -1351,7 +1501,8 @@
                                       (* popup-radius 1.08)
                                       popup-radius)]]
                ^{:key (str "popup-" chosen-space "-" type)}
-               [:g {:on-click (fn [e]
+               [:g {:data-starting-element (name type)
+                    :on-click (fn [e]
                                 (.stopPropagation e)
                                 (reset! intro-hover nil)
                                 (place-at! chosen-space type))
@@ -1500,7 +1651,8 @@
                  fill-op (if hovered? 0.25 0.10)]
              ^{:key (str "halo-" space)}
              [:circle
-              {:cx x :cy y
+              {:data-action-type (name type)
+               :cx x :cy y
                :r (* radius 1.15)
                :stroke stroke-c
                :stroke-width (if hovered? (* 0.28 radius) (* 0.19 radius))
@@ -1658,6 +1810,31 @@
          (filter vector? (keys from-choices)))))
     (catch :default _ {})))
 
+(defn- compute-eat-options
+  "Walk :eat-to → :eat-from and key complete states by eater and food source.
+   A phone can then select an eater first and commit only after a second tap."
+  [post-action-game-wrap]
+  (try
+    (let [[phase eater-choices] (choice/find-state post-action-game-wrap)]
+      (if (not= phase :eat-to)
+        {}
+        (reduce
+         (fn [acc eater-space]
+           (let [eater-state (get-in eater-choices [eater-space :state])
+                 eater-wrap (assoc post-action-game-wrap :state eater-state)
+                 [source-phase source-choices] (choice/find-state eater-wrap)]
+             (if (= source-phase :eat-from)
+               (reduce
+                (fn [acc source-space]
+                  (assoc-in acc [eater-space source-space]
+                            (get-in source-choices [source-space :state])))
+                acc
+                (filter vector? (keys source-choices)))
+               acc)))
+         {}
+         (filter vector? (keys eater-choices)))))
+    (catch :default _ {})))
+
 (defn- compute-grow-options
   "Walk the game's choice tree from the post-:choose-action game wrap
    (phase :grow-element) through :grow-element → :grow-from → :grow-to to
@@ -1772,6 +1949,8 @@
         action-from-map (when action-game
                           (compute-from-spaces-and-options
                            action-game (clojure.string/upper-case (name action-type))))
+        eat-options (when (and (= action-type :eat) action-game)
+                      (compute-eat-options action-game))
         ;; Pre-computed grow options: {grower {dest [{:type :next-state}]}}
         ;; Only populated when the active action is grow.
         grow-options (when (and (= action-type :grow) action-game)
@@ -1786,7 +1965,7 @@
         circ-from-map (when circ-game
                         (compute-from-spaces-and-options circ-game "CIRCULATE"))
 
-        hover (or @from-hover @pointer-space)  ;; {:space [...] :kind :element|:food}
+        hover (or @selected-action-source @from-hover @pointer-space)
         popup @action-popup
         d-hover @dest-hover
         hovered-grow-type @intro-hover
@@ -1815,6 +1994,12 @@
         click-element
         (fn [space]
           (cond
+            (= action-type :eat)
+            (do
+              (cancel-from-hover-clear!)
+              (reset! dest-hover nil)
+              (select-action-source! space))
+
             ;; For grow/move the click on the source element is a no-op:
             ;; the user drives the choice by hovering destinations. Move
             ;; commits on destination click; grow commits on popup click.
@@ -1940,6 +2125,9 @@
               (and (= :element kind) (= action-type :move))
               (when move-options
                 (seq (keys (get move-options space))))
+              (and (= :element kind) (= action-type :eat))
+              (when eat-options
+                (seq (keys (get eat-options space))))
               (= :element kind)
               (when action-from-map
                 (->> (get action-from-map space)
@@ -1950,20 +2138,31 @@
         (when (and (not paying) (seq hover-dests))
           (let [hovering-mover? (and (= action-type :move)
                                      (= :element (:kind hover)))
-                mover-space (when hovering-mover? (:space hover))]
+                mover-space (when hovering-mover? (:space hover))
+                action-source (:space hover)]
             (mapv
              (fn [space]
                (let [[x y] (get locations space)
                      d-hovered? (= space d-hover)
-                     move-commit! (when hovering-mover?
-                                    (fn [_e]
-                                      (let [committed (get-in move-options [mover-space space])]
-                                        (when committed
-                                          (cancel-from-hover-clear!)
-                                          (reset! intro-hover nil)
-                                          (reset! from-hover nil)
-                                          (reset! dest-hover nil)
-                                          (send-state! committed true)))))]
+                     commit! (cond
+                               hovering-mover?
+                               (fn [_e]
+                                 (when-let [committed (get-in move-options [mover-space space])]
+                                   (cancel-from-hover-clear!)
+                                   (reset! intro-hover nil)
+                                   (reset! from-hover nil)
+                                   (reset! dest-hover nil)
+                                   (send-state! committed true)))
+
+                               (and (= action-type :eat)
+                                    (= :element (:kind hover)))
+                               (fn [_e]
+                                 (when-let [committed (get-in eat-options [action-source space])]
+                                   (cancel-from-hover-clear!)
+                                   (reset! selected-action-source nil)
+                                   (reset! from-hover nil)
+                                   (reset! dest-hover nil)
+                                   (send-state! committed true))))]
                  ^{:key (str "dest-" space)}
                  [:circle
                   (cond-> {:cx x :cy y
@@ -1983,7 +2182,7 @@
                                              (reset! dest-hover space))
                            :on-mouse-leave (fn [_e]
                                              (schedule-from-hover-clear!))}
-                    move-commit! (assoc :on-click move-commit!))]))
+                    commit! (assoc :on-click commit!))]))
              hover-dests)))
 
         ;; ── Move preview at hovered destination ────────────────────────
@@ -2430,7 +2629,8 @@
 (defn find-highlights
   [game board colors turn choices]
   (let [highlights
-        (condp = turn
+        (when (or (= turn :create) (can-act-now?))
+         (condp = turn
           :open []
           :create (create-highlights game board colors turn choices)
           :introduce (introduce-highlights game board turn choices)
@@ -2446,7 +2646,7 @@
           :grow-to (choose-target-highlights game board turn choices)
           :move-from (choose-target-highlights game board turn choices)
           :move-to (choose-target-highlights game board turn choices)
-          [])]
+          []))]
     ^{:key "highlights"}
     (if (empty? highlights)
       []
@@ -2507,7 +2707,6 @@
 
 (defn apply-invocation!
   [invocation]
-  (println "INVOCATION" invocation)
   (let [generated (generate-game-state invocation)]
     (swap!
      player-captures-order
@@ -2539,7 +2738,8 @@
                    (.removeEventListener js/document "click" dismiss))]
      (fn [player color turn tooltip href]
        [:div
-        {:style
+        {:class "organism-player-banner"
+         :style
          {:color "#fff"
           :border-radius "50px"
           :cursor "pointer"
@@ -3077,7 +3277,7 @@
     {:style
      {:margin "15px 0px"}}
     [:span
-     {:title "take one step back, potentially to previous player's turn"
+     {:title "take one step back within your current turn"
       :style
       {:color "#fff"
        :cursor "pointer"
@@ -3150,7 +3350,7 @@
          [:eat :grow :move])
         {:keys [chosen-space chosen-element progress] :as introduce} @introduction]
 
-    (if current-player
+    (if (and current-player (can-act-now?))
       [:div
        {:style
         {:margin "20px 20px"}}
@@ -3245,7 +3445,7 @@
   [direction]
   {:style
    {:display "flex"
-    :flex-direction flex-direction}})
+    :flex-direction direction}})
 
 (defn flex-grow
   [direction grow]
@@ -3267,7 +3467,8 @@
   [color]
   (let [invocation @board-invocation]
     [:input
-     {:type :button
+     {:class "organism-secondary-button"
+      :type :button
       :value "reset colors"
       :style
       {:border-radius "20px"
@@ -3412,22 +3613,23 @@
 
 (defn send-player-name!
   [index player-name]
-  (swap! player-order assoc index player-name)
-  (swap! board-invocation update :players
-         (fn [players] (assoc (vec players) index player-name)))
+  ;; The server owns roster identity and echoes an accepted change. Keeping the
+  ;; local row untouched avoids showing a seat that a stale or unauthorized
+  ;; request did not actually claim.
   (components/send-player-name! index player-name))
 
 (defn player-slot-input
-  "Wraps the shared player-search-input for organism's create page."
-  [index color player page-player invocation in-game?]
+  "Creator-only account/bot picker for an empty seat. Free-form names are never
+   committed: a roster member must come from an account or registered bot."
+  [index color invocation]
   [components/player-search-input
    {:slot-id   index
-    :value     player
+    :value     (get @player-drafts index "")
     :color     color
     :game-type "organism"
-    :search?   in-game?
-    :placeholder (if in-game? "search players..." "click to join")
-    :on-change (fn [v] (send-player-name! index v))
+    :search?   true
+    :placeholder "add a player or bot"
+    :on-change (fn [v] (swap! player-drafts assoc index v))
     :on-select (fn [{:keys [name bot?]}]
                  ;; If picking a bot, auto-suffix alphabetically (OBO-A, OBO-B, ...)
                  (let [existing (->> (:players invocation)
@@ -3443,88 +3645,83 @@
                                      (map char (range 65 91))) ;; A-Z
                                     name)
                                 name)]
+                   (swap! player-drafts dissoc index)
                    (send-player-name! index chosen)
-                   (send-open-game! @board-invocation)))
-    :on-focus  (fn []
-                 (when (and (not in-game?) (empty? player))
-                   (send-player-name! index page-player)
-                   (send-open-game! @board-invocation)))
-    ;; Read the atom rather than the invocation this render closed over.
-    ;; send-player-name! has already updated it, while the closed-over copy is
-    ;; whatever was on screen before the name went in — sending that on the way
-    ;; out overwrote the seat that had just been claimed.
-    :on-blur   (fn [] (send-open-game! @board-invocation))}])
+                   nil))}])
+
+(defn player-seat
+  [index color player page-player invocation permissions]
+  (let [{:keys [owner? can-edit? can-join?]} permissions
+        own-seat? (lobby/same-player? player page-player)]
+    [:div.organism-player-seat {:style {:--seat-color color}}
+     (cond
+       (seq player)
+       [:div.organism-player-seat-name
+        [:span.organism-seat-avatar {:style {:background-color color}}
+         (-> player first str string/upper-case)]
+        [:strong player]
+        (when (and owner? (not own-seat?))
+          [:button.organism-seat-remove
+           {:type "button"
+            :aria-label (str "Remove " player " from this game")
+            :on-click (fn [_] (send-player-name! index ""))}
+           "Remove"])]
+
+       can-edit?
+       [player-slot-input index color invocation]
+
+       can-join?
+       [:button.organism-join-seat
+        {:type "button"
+         :style {:border-color color :color color}
+         :on-click (fn [_] (send-player-name! index page-player))}
+        (str "Join as " page-player)]
+
+       :else
+       [:span.organism-open-seat {:style {:border-color color :color color}}
+        "Open seat"])]))
 
 (defn players-input
   [page-player invocation]
-  (let [{:keys [player-count colors player-captures mutations]} invocation
+  (let [{:keys [player-count colors mutations]} invocation
         player-count (if (:RAIN mutations)
                        (inc player-count)
                        player-count)
         order @player-order
-        captures-order @player-captures-order
-        in-game? (some #{page-player} (take player-count order))]
+        creator (if (and (exists? js/lobbyCreator) (seq js/lobbyCreator))
+                  js/lobbyCreator
+                  page-player)
+        permissions (lobby/permissions creator page-player (take player-count order))]
     [:div
      [:h3
       {:style
        {:margin "20px 0px 0px 0px"}}
       [:span
        {:title "click an empty field to join the game\nor modify to add other players"}
-       "players joined "]
-      [:span
-       {:title "how many captures each player is required to win"
-        :style {:font-size "0.8em"}}
-       " (capture limit)"]]
+       "players joined"]]
      (map
-      (fn [index color player captures]
+      (fn [index color player]
         ^{:key index}
-        [:div
-         [player-slot-input index color player page-player invocation in-game?]
-
-         [:select
-          {:value captures
-           :style
-           {:background-color color}
-           :on-change
-           (fn [event]
-             (let [value (-> event .-target .-value js/parseInt)]
-               (swap!
-                player-captures-order
-                assoc index value)
-               (-> invocation
-                   (assoc
-                    :player-captures
-                    (vec
-                     (take
-                      player-count
-                      @player-captures-order)))
-                   (send-create!))))}
-
-          (map
-           (fn [n]
-             ^{:key n}
-             [:option
-              {:value n}
-              n])
-           (range 1 14))]])
+        [player-seat index color player page-player invocation permissions])
       (range)
       (reverse
        (take
         player-count
         (map last colors)))
-      order
-      (take player-count captures-order))]))
+      order)]))
 
 (defn create-button
   [active-color inactive-color invocation]
   (let [valid? (board/valid-invocation? invocation)]
     [:input
-     {:type :button
-      :value (if valid? "CREATE" "incomplete")
+     {:class "organism-primary-button"
+      :type :button
+      :value (if valid? "START GAME" "WAITING FOR PLAYERS")
+      :disabled (not valid?)
       :style
       {:border-radius (if valid? "50px" "10px")
        :color "#fff"
-       :cursor "pointer"
+       :cursor (if valid? "pointer" "default")
        :background (if valid? active-color inactive-color)
        :border "3px solid"
        :font-size "2em"
@@ -3532,8 +3729,8 @@
        :margin "10px 0px"
        :padding "25px 60px"}
       :on-click
-      (fn [event]
-        (if valid?
+      (fn [_]
+        (when valid?
           (let [game-key (if (empty? @create-game-key)
                            (let [k (generate-game-key)]
                              (reset! create-game-key k)
@@ -3547,9 +3744,7 @@
                             {:type "trigger-creation"}))]
             (if @ws/ws-channel
               (trigger!)
-              (connect-create-ws! game-key trigger!)))
-          (dom/redirect!
-           (str js/playerPath "/" js/playerKey))))}]))
+              (connect-create-ws! game-key trigger!)))))}]))
 
 (defn description-input
   [{:keys [description] :as invocation} foreground-color background-color]
@@ -3561,7 +3756,8 @@
      {:title "explain a bit about the game you are creating for potential players"}
      "description"]]
    [:textarea
-    {:value (or description "")
+    {:class "organism-description-input"
+     :value (or description "")
      :rows (inc (quot (count description) 49))
      :style
      {:border-radius "25px"
@@ -3571,7 +3767,9 @@
       :font-size "0.9em"
       :letter-spacing "1px"
       :margin "2px 0px"
-      :width "460px"
+      :box-sizing "border-box"
+     :width "100%"
+     :max-width "460px"
       :padding "10px 30px"}
      ;; :on-blur
      ;; (fn [event]
@@ -3675,14 +3873,18 @@
 
 (defn game-name-input
   [color]
-  (let [connected? (some? @ws/ws-channel)]
+  (let [connected? (some? @ws/ws-channel)
+        existing? (and (exists? js/playKey) (seq js/playKey))
+        locked? (or connected? existing?)]
     [:div
      {:style {:margin-bottom "30px"}}
      [:h3
       {:style {:margin "20px 0px 0px 0px"}}
       "name"]
      [:input
-      {:value @create-game-key
+      {:class "organism-game-name-input"
+       :value @create-game-key
+       :disabled locked?
        :style
        {:border-radius "25px"
         :color "#fff"
@@ -3691,73 +3893,363 @@
         :font-size "1.5em"
         :letter-spacing "6px"
         :margin "2px 0px"
-        :width "366px"
+        :box-sizing "border-box"
+       :width "100%"
+       :max-width "366px"
         :padding "10px 30px"}
        :on-change
        (fn [event]
          (reset! create-game-key (-> event .-target .-value)))
        :on-blur
-       (fn [_] (connect-create-ws! @create-game-key))
+       (fn [_]
+         (connect-create-ws! @create-game-key
+                             #(send-create! @board-invocation)))
        :on-key-up
        (fn [event]
          (when (= (.-key event) "Enter")
-           (connect-create-ws! @create-game-key)))}]]))
+           (connect-create-ws! @create-game-key
+                               #(send-create! @board-invocation))))}]]))
 
 (def create-explanation
   (string/join "\n\n"
     ["Every game has a unique key. A game will always be in one of three states: OPEN / ACTIVE / COMPLETE."
-     "From this page you can choose the number of rings and number of players, as well as the number of organisms required for victory."
-     "You can also choose which other players will be in the game, as well as their personal capture limit required for victory (this defaults to 5)."
-     "If you want to leave some player spots open for others to join, just leave them blank. It will show up in everyone's player page under OPEN."
-     "To join an open game, simply click on the empty player slot and it will fill in your player name."
-     "Once all players have joined and you feel good about the game, hit the CREATE button to begin!"]))
+     "The creator chooses the table and board. Player seats always use registered account names."
+     "Open seats appear on the games page. Each person joins as their signed-in account and can occupy only one seat."
+     "The lobby waits after the final person joins. The creator starts the game when everyone is ready."]))
+
+(defn player-avatar-stack
+  [players colors]
+  [:div.organism-avatar-stack {:aria-label "Players"}
+   (doall
+    (map-indexed
+     (fn [index player]
+       ^{:key (str index "-" player)}
+       [:span.organism-avatar
+        {:title (if (empty? player) "Open seat" player)
+         :style {:background-color (nth colors index)}}
+        (if (empty? player)
+          "+"
+          (-> player first str string/upper-case))])
+     players))])
+
+(defn create-topbar
+  [invocation colors]
+  (let [{:keys [players ring-count]} invocation
+        title (if (string/blank? @create-game-key) "New game" @create-game-key)]
+    [:header.organism-topbar
+     [:a.organism-wordmark {:href js/homePath :aria-label "ORGANISM home"}
+      [:span.organism-wordmark-mark "O"]
+      [:span "ORGANISM"]]
+     [:div.organism-title-cluster
+      [:button.organism-title-button
+       {:type "button"
+        :title (str ring-count " rings · " (count players) " players")
+        :aria-expanded (str @create-meta-open?)
+        :on-click #(swap! create-meta-open? not)}
+       [:strong title]
+       [:span.organism-title-chevron "⌄"]]
+      (when @create-meta-open?
+        [:div.organism-title-popover {:role "dialog" :aria-label "Game details"}
+         [:div [:span "Field"] [:strong (str ring-count " rings")]]
+         [:div [:span "Players"] [:strong (str (count players))]]])]
+     [player-avatar-stack players colors]]))
+
+(defn create-setup-drawer
+  [invocation create-color select-color inactive-color permissions]
+  (let [{:keys [owner? seated? can-join?]} permissions]
+    [:aside.organism-setup-drawer
+     {:class (when @create-setup-open? "is-open")
+      :aria-hidden (str (not @create-setup-open?))}
+     [:div.organism-drawer-header
+      [:div
+       [:span.organism-eyebrow (if owner? "CONFIGURE" "LOBBY")]
+       [:h2 (if owner? "Set the table" "Choose your seat")]]
+      [:button.organism-icon-button
+       {:type "button" :aria-label "Close lobby"
+        :on-click #(reset! create-setup-open? false)}
+       "×"]]
+     [:div.organism-drawer-scroll
+      [:section.organism-field-group
+       [:label.organism-field-label "Game title"]
+       (if owner?
+         [game-name-input create-color]
+         [:strong.organism-locked-game-title @create-game-key])]
+      [:section.organism-field-group
+       [:div.organism-field-heading
+        [:div
+         [:span.organism-field-label "Players"]
+         [:span.organism-field-hint
+          (cond owner? "Choose accounts or bots, then start when everyone is ready"
+                seated? "You are seated. The creator will start the game"
+                can-join? (str "Choose one seat as " js/playerKey)
+                :else "Sign in to join")]]
+        (when owner? [player-count-input select-color])]
+       [players-input js/playerKey invocation]]
+      (when owner?
+        [:details.organism-options
+         [:summary
+          [:span
+           [:strong "Game options"]
+           [:small "Board and description"]]
+          [:span "⌄"]]
+         [:div.organism-options-body
+          [ring-count-input select-color]
+          [description-input invocation select-color inactive-color]
+          [reset-colors-input inactive-color]]])]
+     [:div.organism-drawer-footer
+      (if owner?
+        [create-button create-color inactive-color invocation]
+        [:span.organism-lobby-status
+         (if seated?
+           "You’re seated · waiting for the creator"
+           (str "Join one open seat as " js/playerKey))])]]))
+
+(defn- launch-lobby!
+  [invocation]
+  (cond
+    (string/blank? @create-game-key)
+    (reset! lobby-feedback {:kind :error :message "Give the game a name before launching the lobby."})
+
+    (and (= "private" (or (:visibility invocation) "open"))
+         (string/blank? (:lobby-password invocation)))
+    (reset! lobby-feedback {:kind :error :message "Private games need a lobby password."})
+
+    :else
+    (do
+      (reset! lobby-feedback {:kind :pending :message "Launching lobby…"})
+      (connect-create-ws!
+       @create-game-key
+       #(do
+          (components/send-create! invocation)
+          (reset! lobby-feedback {:kind :pending :message "Saving lobby…"}))))))
+
+(defn- join-private-lobby!
+  [game-key index password]
+  (reset! lobby-feedback {:kind :pending :message "Checking password…"})
+  (ajax-core/POST
+   (str "/organism/play/" (js/encodeURIComponent game-key) "/join")
+   {:params {:index index :password password}
+    :handler (fn [_]
+               (reset! lobby-feedback {:kind :success :message "Seat joined."})
+               (.reload js/location))
+    :error-handler (fn [response]
+                     (reset! lobby-feedback
+                             {:kind :error
+                              :message (or (get-in response [:response :error])
+                                           "That password did not open the lobby.")}))}))
+
+(defn- lobby-seat-card
+  [index player color creator current-player readiness bots owner? can-join? private? password]
+  (let [own-seat? (lobby/same-player? player current-player)
+        bot? (contains? bots player)
+        ready? (or bot? (lobby/ready? readiness player))]
+    [:article.organism-lobby-seat {:style {:--seat-color color}}
+     [:span.organism-lobby-seat-number (inc index)]
+     (if (seq player)
+       [:<>
+        [:span.organism-seat-avatar {:style {:background-color color}}
+         (-> player first str string/upper-case)]
+        [:div.organism-lobby-seat-copy
+         [:strong player]
+         [:span (cond (lobby/same-player? player creator) "Lobby owner"
+                      bot? "Bot · always ready"
+                      ready? "Ready"
+                      :else "Not ready")]]
+        [:span {:class (str "organism-ready-pill " (when ready? "is-ready"))}
+         (if ready? "READY" "WAITING")]
+        (when (and owner? (not own-seat?))
+          [:button.organism-seat-remove
+           {:type "button" :on-click #(send-kick! index)
+            :aria-label (str "Kick " player " from the lobby")}
+           "Kick"])]
+       [:div.organism-lobby-open-seat
+        [:strong "Open seat"]
+        [:span "Waiting for a player"]
+        (when can-join?
+          (if private?
+            [:button.organism-secondary-button
+             {:type "button"
+              :on-click #(join-private-lobby! @create-game-key index @password)}
+             "Join with password"]
+            [:button.organism-secondary-button
+             {:type "button" :on-click #(send-player-name! index current-player)}
+             (str "Join as " current-player)]))])]))
+
+(defn- lobby-chat-panel
+  [player-colors]
+  [:section.organism-lobby-card.organism-lobby-chat
+   [discussion-panel player-colors @chat "Talk before the game" "LOBBY CHAT"]])
+
+(defn- create-workflow
+  [invocation create-color select-color inactive-color]
+  [:main.organism-create-workflow
+   [:header.organism-lobby-header
+    [:a.organism-wordmark {:href js/homePath}
+     [:span.organism-wordmark-mark "O"] [:span "ORGANISM"]]
+    [:span.organism-eyebrow "CREATE GAME"]]
+   [:section.organism-create-card
+    [:div.organism-create-intro
+     [:span.organism-eyebrow "NEW TABLE"]
+     [:h1 "Create your game"]
+     [:p "Choose the table settings now. You’ll invite players and ready up together in the lobby next."]]
+    [:div.organism-create-grid
+     [:section.organism-field-group
+      [:label.organism-field-label "Game name"]
+      [:input.organism-game-name-input
+       {:type "text"
+        :value @create-game-key
+        :placeholder "Friday night bloom"
+        :autocomplete "off"
+        :on-change #(reset! create-game-key (-> % .-target .-value))}]]
+     [:section.organism-field-group
+      [:label.organism-field-label "Players"]
+      [player-count-input select-color]
+      [:span.organism-field-hint "You take seat 1; the remaining seats open in the lobby."]]
+     [:section.organism-field-group
+      [:label.organism-field-label "Field size"]
+      [ring-count-input select-color]]
+     [:section.organism-field-group
+      [:label.organism-field-label "Who can join?"]
+      [:div.organism-visibility-choice
+       (for [[value label copy] [["open" "Open game" "Anyone signed in can discover and join."]
+                                 ["private" "Private game" "Only friends with the link and password can join."]]]
+         ^{:key value}
+         [:label {:class (when (= value (or (:visibility invocation) "open")) "is-selected")}
+          [:input {:type "radio" :name "visibility" :value value
+                   :checked (= value (or (:visibility invocation) "open"))
+                   :on-change #(send-create! (assoc invocation :visibility value))}]
+          [:span [:strong label] [:small copy]]])]
+      (when (= "private" (or (:visibility invocation) "open"))
+        [:input.organism-lobby-password
+         {:type "password" :placeholder "Lobby password" :autocomplete "new-password"
+          :value (or (:lobby-password invocation) "")
+          :on-change #(send-create! (assoc invocation :lobby-password (-> % .-target .-value)))}])]
+     [:section.organism-field-group.organism-create-description
+      [:label.organism-field-label "Description (optional)"]
+      [description-input invocation select-color inactive-color]]]
+    (when @lobby-feedback
+      [:p.organism-lobby-feedback {:class (name (:kind @lobby-feedback)) :role "status"}
+       (:message @lobby-feedback)])
+    [:footer.organism-create-footer
+     [:a.organism-secondary-button {:href (str js/playerPath "/" js/playerKey)} "Cancel"]
+     [:button.organism-primary-button {:type "button" :on-click #(launch-lobby! invocation)}
+      "LAUNCH LOBBY"]]]])
+
+(defn- lobby-workflow
+  [invocation creator permissions colors player-colors]
+  (let [password (r/atom "")]
+    (fn [invocation creator permissions colors player-colors]
+      (let [players (:players invocation)
+            owner? (:owner? permissions)
+            seated? (:seated? permissions)
+            private? (= "private" @lobby-visibility)
+            blocker (lobby/launch-blocker players @lobby-readiness @lobby-bots)
+            occupied (count (remove string/blank? players))]
+       [:main.organism-lobby-workflow
+       [:header.organism-lobby-header
+        [:a.organism-wordmark {:href js/homePath}
+         [:span.organism-wordmark-mark "O"] [:span "ORGANISM"]]
+        [:span.organism-lobby-state "OPEN LOBBY"]]
+       [:section.organism-lobby-hero
+        [:div
+         [:span.organism-eyebrow (if private? "PRIVATE GAME" "OPEN GAME")]
+         [:h1 @create-game-key]
+         [:p (str (count players) " seats · " (:ring-count invocation) "-ring field · "
+                  (if private? "Password required" "Anyone can join"))]]
+        [:div.organism-invite-block
+         [:span "INVITE LINK"]
+         [:code (.-href js/location)]
+         [:button.organism-secondary-button
+          {:type "button"
+           :on-click #(-> js/navigator .-clipboard (.writeText (.-href js/location))
+                          (.then (fn [] (reset! lobby-feedback {:kind :success :message "Invite link copied."}))))}
+          "Copy invite"]
+         (when (.-share js/navigator)
+           [:button.organism-secondary-button
+            {:type "button"
+             :on-click #(.share js/navigator
+                                #js {:title (str "Join " @create-game-key " on ORGANISM")
+                                     :url (.-href js/location)})}
+            "Share"])]]
+       (when (and private? (not seated?))
+         [:section.organism-private-admission
+          [:label "Lobby password"]
+          [:input {:type "password" :value @password
+                   :on-change #(reset! password (-> % .-target .-value))
+                   :placeholder "Enter the password from your friend"}]])
+       (when @lobby-feedback
+         [:p.organism-lobby-feedback {:class (name (:kind @lobby-feedback)) :role "status"}
+          (:message @lobby-feedback)])
+       [:div.organism-lobby-columns
+        [:section.organism-lobby-card
+         [:div.organism-lobby-card-heading
+          [:div [:span.organism-eyebrow "PLAYERS"] [:h2 (str occupied " of " (count players) " seats")]]
+          (when owner?
+            [:details.organism-lobby-settings
+             [:summary "Edit settings"]
+             [:div
+              [:label.organism-field-label "Field size"]
+              [:select.organism-lobby-setting-input
+               {:value (:ring-count invocation)
+                :on-change
+                (fn [event]
+                  (let [value (-> event .-target .-value js/parseInt)]
+                    (send-create!
+                     (-> invocation
+                         (assoc :ring-count value)
+                         (assoc :colors
+                                (board/generate-colors-buffer
+                                 board/total-rings value max-players))))))}
+               (for [n (range 3 8)] ^{:key n} [:option {:value n} (str n " rings")])]
+              [:small "Changing the field marks every human player not ready again."]
+              [:label.organism-field-label "Description"]
+              [:textarea.organism-lobby-setting-input
+               {:value (or (:description invocation) "")
+                :rows 3
+                :placeholder "What kind of table are you hosting?"
+                :on-change #(send-create!
+                             (assoc invocation :description (-> % .-target .-value)))}]
+              [:small (if private?
+                        "This lobby remains private and password-protected."
+                        "This lobby remains publicly discoverable.")]]])]
+         [:div.organism-lobby-roster
+          (doall
+           (map-indexed
+            (fn [index player]
+              ^{:key index}
+              [lobby-seat-card index player (nth colors index) creator js/playerKey
+               @lobby-readiness @lobby-bots owner? (:can-join? permissions)
+               private? password])
+            players))]
+         [:div.organism-lobby-launch
+          [:p {:role "status"} (or blocker "Everyone is ready. The owner can start the game.")]
+          (when seated?
+            [:button.organism-secondary-button
+             {:type "button"
+              :on-click #(send-ready! (not (lobby/ready? @lobby-readiness js/playerKey)))}
+             (if (lobby/ready? @lobby-readiness js/playerKey) "Mark not ready" "Ready up")])
+          (when owner?
+            [:button.organism-primary-button
+             {:type "button" :disabled (some? blocker)
+              :on-click #(components/send-trigger-creation!)}
+             "START GAME"])] ]
+        [lobby-chat-panel player-colors]]]))))
 
 (defn create-page
   []
   (let [invocation @board-invocation
-        {:keys [game board turn choices]} @game-state
-        {:keys [state turn-order]} game
-        turn-order (:players invocation)
-        player-captures (:player-captures invocation)
-        organism-victory (:organism-victory invocation)
-        description (:description invocation)
-        mutations (:mutations invocation)
-        invocation-colors (invocation-player-colors (count turn-order) invocation)
-        player-colors (into {} (map vector turn-order invocation-colors))
+        players (:players invocation)
+        colors (vec (invocation-player-colors (count players) invocation))
+        player-colors (into {} (map vector players colors))
+        creator (if (exists? js/lobbyCreator) js/lobbyCreator js/playerKey)
+        permissions (lobby/permissions creator js/playerKey players)
         create-color (-> invocation :colors rest first last)
         select-color (-> invocation :colors first last)
         inactive-color (-> invocation :colors last last)]
     (game-layout
-     [:main
-      (flex-grow "row" 1)
-      [:nav
-       {:style
-        {:width "30%"}}
-       [:div
-        {:style
-         {:margin "20px 20px"}}
-        [current-player-banner js/playerKey (get player-colors js/playerKey inactive-color) "create game" create-explanation js/homePath]]
-       [:form
-        {:style
-         {:margin "40px 60px"}}
-        [game-name-input create-color]
-        [ring-count-input select-color]
-        [player-count-input select-color]
-        [description-input invocation select-color inactive-color]
-        [players-input js/playerKey invocation]
-        [:div
-         {:style {:display "flex" :flex-direction "column" :align-items "center" :width "fit-content" :margin "20px 40px"}}
-         [reset-colors-input inactive-color]
-         [create-button create-color inactive-color invocation]]
-        [mutations-select create-color invocation]]]
-      [:article
-       {:style {:flex-grow 1}}
-       [organism-board game board invocation-colors turn choices]]
-      (println "INVOCATION" invocation)
-      [:aside
-       {:style
-        {:width "30%"}}
-       [chat-panel description turn-order organism-victory invocation-colors player-colors player-captures mutations state [] nil @chat]]])))
+     (if @lobby-launched?
+       [lobby-workflow invocation creator permissions colors player-colors]
+       [create-workflow invocation create-color select-color inactive-color]))))
 
 (defn play-player-banner
   "Current-player box for the play page. The player name shrinks/wraps to fit
@@ -3799,45 +4291,98 @@
          (string/join " " (string/split (name subphase) #"-"))])])])
 
 (defn game-info-panel
-  "Merged single info column for the play page: game name + round, current
-   player + phase/subphase, description, action/turn controls + clear/undo,
-   then score / history / help / discussion. The element controls are gone —
-   every action now happens on the board itself."
+  "Secondary game information kept out of the persistent play surface."
   [game board turn choices history cursor
    description turn-order organism-victory colors player-colors
    player-captures mutations state chat]
-  (let [organism-turn (game/get-organism-turn game)
-        action-type (:choice organism-turn)
-        current-player (game/current-player game)
-        current-color (or (get player-colors current-player) (first colors) "#445")
-        board-colors (into {} (:colors board))]
-    [:div
-     {:style {:margin "20px"}}
-     ;; game name + round
-     [round-banner current-color (:round state)]
-     ;; current player + phase + subphase
-     (when current-player
-       [play-player-banner current-player current-color turn action-type
-        (str js/playerPath "/" js/playerKey)])
-     [:div
-      {:style {:margin "10px 10px"}}
-      ;; description (moved over from the old right column)
+  (let [current-player (game/current-player game)
+        current-color (or (get player-colors current-player) (first colors) "#445")]
+    [:div.organism-game-info-panel
+     {:style {:margin "0"}}
+     [:div.organism-details-content
       [description-panel current-color description]
-      ;; action / turn controls + clear / undo  (element controls removed)
-      (when current-player
-        [:div
-         (when-not (= turn :choose-organism)
-           [action-controls board-colors turn choices current-color organism-turn])
-         (when-not (-> game :state :winner)
-           [undo-control turn choices (:state game)])])
-      ;; score / history / help / discussion
       [scoreboard turn-order organism-victory colors player-captures mutations state]
       [history-controls history cursor]
       [help-panel current-color]
-      [:h3 "discussion"]
-      [chat-list player-colors chat]
-      [:br]
-      [chat-input]]]))
+      [discussion-panel player-colors chat "Discussion" "GAME CHAT"]]]))
+
+(defn action-prompt
+  [turn]
+  (get
+   {:introduce "Place your starting elements on highlighted spaces"
+    :choose-organism "Choose one of your organisms on the board"
+    :choose-action-type "Choose an action from one of your elements"
+    :choose-action "Select a highlighted destination"
+    :eat "Select an available food source"
+    :grow "Choose where your organism should grow"
+    :move "Choose a highlighted destination"}
+   turn
+   "Use the highlighted board spaces to continue"))
+
+(defn game-topbar
+  [invocation turn-order colors state]
+  [:header.organism-topbar
+   [:a.organism-wordmark {:href js/homePath :aria-label "ORGANISM home"}
+    [:span.organism-wordmark-mark "O"]
+    [:span "ORGANISM"]]
+   [:div.organism-title-cluster
+    [:button.organism-title-button
+     {:type "button"
+      :title (str "Round " (or (:round state) 1) " · " (:ring-count invocation)
+                  " rings · " (:organism-victory invocation) " organisms to win")
+      :aria-expanded (str @game-meta-open?)
+      :on-click #(swap! game-meta-open? not)}
+     [:strong js/playKey]
+     [:span.organism-title-chevron "⌄"]]
+    (when @game-meta-open?
+      [:div.organism-title-popover {:role "dialog" :aria-label "Game details"}
+       [:div [:span "Round"] [:strong (str (or (:round state) 1))]]
+       [:div [:span "Field"] [:strong (str (:ring-count invocation) " rings")]]
+       [:div [:span "Victory"] [:strong (str (:organism-victory invocation) " organisms")]]])]
+   [:div.organism-topbar-actions
+    [player-avatar-stack turn-order colors]
+    [:button.organism-icon-button
+     {:type "button"
+      :aria-label "Scores, history, help and discussion"
+      :aria-expanded (str @game-details-open?)
+      :on-click #(swap! game-details-open? not)}
+     "•••"]]])
+
+(defn game-action-dock
+  [game board turn choices player-colors]
+  (let [organism-turn (game/get-organism-turn game)
+        current-player (game/current-player game)
+        current-color (or (get player-colors current-player) "#445")
+        winner (get-in game [:state :winner])
+        {:keys [player cursor]} @game-state
+        replay? (some? cursor)
+        active? (can-act-now?)
+        seated? (some #{player} (:turn-order game))
+        board-colors (into {} (:colors board))]
+    [:div.organism-floating-dock.organism-action-dock
+     [:span.organism-turn-dot {:style {:background current-color}}]
+     [:div.organism-dock-copy
+      [:span.organism-eyebrow
+       (cond replay? "REPLAY"
+             winner "GAME OVER"
+             active? "YOUR TURN"
+             seated? "WAITING"
+             :else "WATCHING")]
+      [:strong {:role "status" :aria-live "polite"}
+       (cond replay? "Viewing game history"
+             winner (str winner " wins!")
+             active? (action-prompt turn)
+             current-player (str "Waiting for " current-player)
+             :else "Waiting for the game")]]
+     [:div.organism-dock-actions
+      (when replay?
+        [:button.organism-secondary-button
+         {:type "button" :on-click #(swap! game-state assoc :cursor nil)}
+         "Return to live game"])
+      (when (and active? (not= turn :choose-organism))
+        [action-controls board-colors turn choices current-color organism-turn])
+      (when active?
+        [undo-control turn choices (:state game)])]]))
 
 (defn game-page
   []
@@ -3851,16 +4396,31 @@
         [turn choices] (if cursor (choice/find-state game) [turn choices])
         {:keys [player-colors]} board]
     (game-layout
-     [:main
-      (flex-grow "row" 1)
-      [:aside
-       {:style {:width "34%" :min-width "340px"}}
-       [game-info-panel game board turn choices history cursor
-        description turn-order organism-victory invocation-colors player-colors
-        player-captures mutations state @chat]]
-      [:article
-       {:style {:flex-grow 1}}
-       [organism-board game board invocation-colors turn choices]]])))
+     [:main.organism-canvas-shell.organism-game-canvas
+      [game-topbar invocation turn-order invocation-colors state]
+      [:section.organism-canvas-stage
+       {:aria-label "Game board" :on-click-capture guard-play-click!}
+       [organism-board game board invocation-colors turn choices]]
+      [game-action-dock game board turn choices player-colors]
+      (when @game-details-open?
+        [:button.organism-drawer-scrim
+         {:type "button" :aria-label "Close game details"
+          :on-click #(reset! game-details-open? false)}])
+      [:aside.organism-details-drawer
+       {:class (when @game-details-open? "is-open")
+        :aria-hidden (str (not @game-details-open?))}
+       [:div.organism-drawer-header
+        [:div
+         [:span.organism-eyebrow "GAME"]
+         [:h2 "Details"]]
+        [:button.organism-icon-button
+         {:type "button" :aria-label "Close game details"
+          :on-click #(reset! game-details-open? false)}
+         "×"]]
+       [:div.organism-drawer-scroll
+        [game-info-panel game board turn choices history cursor
+         description turn-order organism-victory invocation-colors player-colors
+         player-captures mutations state @chat]]]])))
 
 
 (def player-active? components/player-active?)
@@ -4021,12 +4581,27 @@
     :home-path js/homePath
     :font-family font-choice}])
 
+(defn game-loading-page
+  []
+  [:main.organism-game-loader
+   {:role "status" :aria-live "polite" :aria-label "Opening game"}
+   [:div.organism-game-loader-card
+    [:span.organism-game-loader-mark {:aria-hidden "true"} "O"]
+    [:div.organism-game-loader-spinner {:aria-hidden "true"}
+     [:span]]
+    [:p.organism-eyebrow "CONNECTING"]
+    [:h1 "Opening table"]
+    [:p "Checking whether this table is a lobby or a game in progress…"]]])
+
 (defn page-container
   []
   (cond
     js/isStats    [stats-page]
     js/isObserve  [observe-page]
     js/isCreate   [create-page]
+    (and (exists? js/playKey)
+         (not (string/blank? js/playKey))
+         @game-loading?) [game-loading-page]
     js/playerKey  (cond
                     js/playKey (let [invocation @board-invocation]
                                  (if (:created invocation)
@@ -4035,9 +4610,78 @@
                     :else      [player-page js/playerKey])
     :else         [home-page (reader/read-string js/players)]))
 
+(def dormant-favicon "/favicon/dormant.ico")
+(def active-favicon "/favicon/active.ico")
+(def neutral-favicon "/favicon/neutral.ico")
+
+(defonce ^:private turn-title-timer (atom nil))
+(defonce ^:private turn-audio-context (atom nil))
+
+(defn- audio-context!
+  []
+  (or @turn-audio-context
+      (when-let [constructor (or (.-AudioContext js/window)
+                                 (.-webkitAudioContext js/window))]
+        (let [context (js/Reflect.construct constructor #js [])]
+          (reset! turn-audio-context context)
+          context))))
+
+(defn- unlock-turn-audio!
+  []
+  (when-let [context (audio-context!)]
+    (when (= "suspended" (.-state context))
+      (.resume context))))
+
+(defn- play-turn-ding!
+  []
+  (when-let [context @turn-audio-context]
+    (when (= "running" (.-state context))
+      (let [now (.-currentTime context)
+            oscillator (.createOscillator context)
+            gain (.createGain context)]
+        (set! (.-type oscillator) "sine")
+        (.setValueAtTime (.-frequency oscillator) 880 now)
+        (.setValueAtTime (.-gain gain) 0.0001 now)
+        (.exponentialRampToValueAtTime (.-gain gain) 0.12 (+ now 0.02))
+        (.exponentialRampToValueAtTime (.-gain gain) 0.0001 (+ now 0.24))
+        (.connect oscillator gain)
+        (.connect gain (.-destination context))
+        (.start oscillator now)
+        (.stop oscillator (+ now 0.25))))))
+
+(defn- stop-turn-title-flash!
+  []
+  (when-let [timer @turn-title-timer]
+    (.clearInterval js/window timer)
+    (reset! turn-title-timer nil)))
+
+(defn- set-turn-tab-state!
+  [ring?]
+  (when (and (exists? js/playKey) (not (string/blank? js/playKey)))
+    (let [signed-in? (and (exists? js/playerKey) (not (string/blank? js/playerKey)))
+          current-game (:game @game-state)
+          your-turn? (and signed-in?
+                          (turn-notification/your-turn? js/playerKey current-game))
+          set-title! #(set! (.-title js/document)
+                            (turn-notification/tab-title js/playKey your-turn? %))]
+      (stop-turn-title-flash!)
+      (dom/change-favicon (cond your-turn? active-favicon
+                                signed-in? dormant-favicon
+                                :else neutral-favicon))
+      (set-title! your-turn?)
+      (when (and your-turn? (.-hidden js/document))
+        (let [attention? (atom true)]
+          (reset! turn-title-timer
+                  (.setInterval js/window
+                                (fn []
+                                  (swap! attention? not)
+                                  (set-title! @attention?))
+                                900))))
+      (when (and ring? your-turn?)
+        (play-turn-ding!)))))
+
 (defn update-messages!
   [{:keys [type] :as received}]
-  (println "MESSAGE RECEIVED" received)
   (condp = type
     "initialize"
     (if js/isCreate
@@ -4045,6 +4689,7 @@
                           (js/encodeURIComponent @create-game-key)))
       (do
         (swap! game-state initialize-game received)
+        (set-turn-tab-state! false)
         (reset! board-invocation (:invocation received))
         (reset! clear-state (-> received :game :state))
         ;; Seed the animation baseline so the first in-game transition has
@@ -4054,26 +4699,61 @@
           (reset! target-state current-state)
           (reset! transition-progress 1.0))
         (swap! chat initialize-chat received)
-        (if-let [cursor (:cursor @game-state)]
+        (when-let [cursor (:cursor @game-state)]
           (let [total (count (:history received))]
-            (if (< cursor total)
-              (set-history-advance! total cursor))))))
+            (when (< cursor total)
+              (set-history-advance! total cursor))))
+        (reset! game-loading? false)))
     "create"
-    (if js/isCreate
-      ;; On the create page, local state is authoritative — don't let
-      ;; the server's default overwrite what the user configured
-      nil
-      (do
+    (do
+      (when (contains? received :readiness)
+        (reset! lobby-readiness (or (:readiness received) {})))
+      (when (contains? received :visibility)
+        (reset! lobby-visibility (or (:visibility received) "open")))
+      (when (contains? received :bots)
+        (reset! lobby-bots (set (:bots received))))
+      (when (contains? received :chat)
+        (reset! chat (or (:chat received) [])))
+      (when-not (and js/isCreate
+                     (not @lobby-launched?)
+                     (exists? js/lobbyCreator)
+                     (lobby/same-player? js/lobbyCreator js/playerKey))
         (reset! board-invocation (:invocation received))
-        (reset! chat (:chat received))
-        (apply-invocation! @board-invocation)))
+        (apply-invocation! @board-invocation))
+      (reset! game-loading? false))
     "player-name"
     (let [{:keys [index player]} received]
       (swap! player-order assoc index player)
       (swap! board-invocation update :players (fn [players] (assoc (vec players) index player))))
-    "game-state"
+    "lobby-ready"
+    (let [{:keys [player ready]} received]
+      (swap! lobby-readiness assoc (lobby/identity-key player) ready))
+    "lobby-readiness"
+    (reset! lobby-readiness (:readiness received))
+    "lobby-created"
     (do
+      (when-let [invocation (:invocation received)]
+        (reset! board-invocation invocation)
+        (apply-invocation! invocation))
+      (reset! lobby-launched? true)
+      (.replaceState js/history nil ""
+                     (str "/organism/create/"
+                          (js/encodeURIComponent @create-game-key)))
+      (reset! lobby-feedback {:kind :success :message "Lobby launched. Invite your players."}))
+    "lobby-updated"
+    (do
+      (when-let [invocation (:invocation received)]
+        (reset! board-invocation invocation)
+        (apply-invocation! invocation))
+      (reset! lobby-feedback {:kind :success :message "Lobby settings saved."}))
+    "lobby-removed"
+    (dom/redirect! "/organism")
+    "game-state"
+    (let [previous-game (:game @game-state)]
       (swap! game-state update-game received)
+      (set-turn-tab-state!
+       (turn-notification/turn-became-yours?
+        js/playerKey previous-game (:game @game-state)))
       (start-transition! (-> @game-state :game :state))
       (reset! food-source {})
       ;; Clear stale hover/popup state from the previous phase so the
@@ -4127,11 +4807,38 @@
       (reset! dest-hover nil)
       (reset! action-popup nil)
       (reset! intro-hover nil))
-    "chat" (swap! chat update-chat received)
-    "error" (js/alert (:message received))
+    "chat"
+    (do
+      (swap! chat update-chat received)
+      (when (lobby/chat-delivery-acknowledges?
+             (:client-id @chat-submission) received)
+        (when-let [timer @chat-delivery-timer]
+          (.clearTimeout js/window timer)
+          (reset! chat-delivery-timer nil))
+        (reset! chat-draft "")
+        (reset! chat-submission nil)
+        (reset! chat-feedback {:kind :success :message "Sent."})))
+    "chat.created"
+    (when-let [message (:message received)]
+      (swap! chat update-chat message))
+    "error"
+    (if (and @chat-submission (= "chat" (:scope received)))
+      (do
+        (when-let [timer @chat-delivery-timer]
+          (.clearTimeout js/window timer)
+          (reset! chat-delivery-timer nil))
+        (reset! chat-submission nil)
+        (reset! chat-feedback {:kind :error :message (:message received)}))
+      (if js/isCreate
+        (reset! lobby-feedback {:kind :error :message (:message received)})
+        (js/alert (:message received))))
     ;; condp with no default throws, which would turn any message this build
     ;; does not know about into a broken page.
-    (js/console.warn "unhandled message type" type (pr-str received))))
+    (js/console.warn "unhandled message type" type (pr-str received)))
+  ;; WebSocket callbacks run outside Reagent's event batching. Flush the queued
+  ;; atom reactions so roster changes and the lobby-to-game transition become
+  ;; visible without requiring a refresh.
+  (r/flush))
 
 ;; -------------------------
 ;; Routes
@@ -4164,10 +4871,6 @@
   (println "MOUNTING")
   (rdom/render [#'page-container] (.getElementById js/document "organism")))
 
-(def dormant-favicon "/favicon/dormant.ico")
-(def active-favicon "/favicon/active.ico")
-(def neutral-favicon "/favicon/neutral.ico")
-
 (defn init!
   []
   (let [player? (not (empty? js/playerKey))
@@ -4179,6 +4882,11 @@
         body-height (.-scrollHeight (.-body js/document))]
     (ajax/load-interceptors!)
     (hook-browser-navigation!)
+    (doseq [event-name ["pointerdown" "keydown"]]
+      (.addEventListener js/window event-name unlock-turn-audio!
+                         #js {:once true :passive true}))
+    (.addEventListener js/document "visibilitychange"
+                       #(set-turn-tab-state! false))
     (let [protocol
           (if (= (.-protocol js/location) "https:")
             "wss:"
@@ -4220,7 +4928,8 @@
         (when-let [inv (components/preloaded-invocation)]
           (reset! board-invocation inv))
         (when-let [pk (components/preloaded-play-key)]
-          (reset! create-game-key pk))
+          (reset! create-game-key pk)
+          (reset! lobby-launched? true))
         (apply-invocation! @board-invocation)
         (when-let [pk (components/preloaded-play-key)]
           (connect-create-ws! pk)))

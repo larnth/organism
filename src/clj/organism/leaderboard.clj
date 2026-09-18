@@ -62,21 +62,17 @@
 (defn game-outcome
   "A finished game reduced to what rating cares about.
 
-   The winner is recorded on the final history entry, and that entry's ObjectId
-   carries the time it was written — the same trick `load-observe-games` uses to
-   order the observe page. Games that were abandoned rather than won have no
-   winner and drop out here."
+   Adopted games use the canonical head and acceptance time, even if derived
+   history is unavailable. Legacy games retain their ObjectId time fallback."
   [db game]
-  (let [final (db/find-last db (persist/history-key (:key game)) {})
+  (let [{final :state at :at} (persist/game-head db game)
         winner (:winner final)
-        players (vec (get-in game [:invocation :players]))
-        id (:_id final)]
-    (when (and (rating/rateable? players winner)
-               (instance? ObjectId id))
+        players (vec (get-in game [:invocation :players]))]
+    (when (and (rating/rateable? players winner) at)
       {:key (:key game)
        :players players
        :winner winner
-       :finished-at (.getTimestamp ^ObjectId id)})))
+       :finished-at at})))
 
 (defn decided-games
   "Every rateable organism game, oldest first, tagged with its rating period."

@@ -30,6 +30,12 @@
   [db collection where what]
   (mongo/update db (name collection) where {:$set what} {:upsert true}))
 
+(defn find-and-merge!
+  "Atomically claim and return at most one matching document."
+  [db collection where what]
+  (mongo/find-and-modify db (name collection) where {:$set what}
+                         {:return-new true}))
+
 (defn merge-all!
   "Like merge! but $set's `what` on ALL matching documents (multi), no upsert."
   [db collection where what]

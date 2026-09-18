@@ -1,0 +1,17 @@
+.git
+.hermes
+.env
+.env.*
+!.env.example
+node_modules
+client/node_modules
+client/dist
+target
+.shadow-cljs
+resources/public/js/cljs-runtime
+backups
+*.archive
+*.archive.gz
+*.dump
+*.log
+.DS_Store

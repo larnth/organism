@@ -10,13 +10,19 @@ test-config.edn
 /.lein-*
 profiles.clj
 /.env
+/.env.*
+!/.env.example
+/.hermes/
+/backups/
 .nrepl-port
 .rebel_readline_history
 /node_modules
 /client/node_modules/
 /client/*.tsbuildinfo
 /.shadow-cljs
-/resources/public/js
+/resources/public/js/*
+!/resources/public/js/landing.js
+!/resources/public/js/registration.js
 /resources/public/modern/
 /log
 backup/
@@ -41,5 +47,7 @@ auto.save
 !/pieces/out/GROW_sculpt_graft.obj
 bonus-coverage/
 *.mp4
+# The learning page's deployable media are runtime assets, not render scratch.
+!/resources/public/video/*.mp4
 .nix-mongo/
 /pieces/stl

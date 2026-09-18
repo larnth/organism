@@ -13,6 +13,10 @@
    [organism.bots :as bots]
    [organism.choice :as choice]
    [organism.game :as game]
+   [organism.leaderboard :as leaderboard]
+   [organism.persist :as persist]
+   [organism.api.commands :as commands]
+   [organism.mutations :as mutations]
    [organism.persist-journey-bots :as bots-db]))
 
 ;; ── Helpers ──────────────────────────────────────────────────────────────
@@ -422,26 +426,117 @@
   [games-atom game-key humans delay-ms on-turn & [db]]
   {:label          (str "ORGANISM BOT " game-key)
    :get-game       (fn [] (:game (get-in @games-atom [:games game-key])))
-   :put-game!      (fn [next-game]
-                     (swap! games-atom assoc-in [:games game-key :game] next-game))
+   ;; Intermediate engine steps are provisional until the turn is persisted.
+   :put-game!      nil
    :agent-step+key (if db (make-agent-step+key db) agent-step+key)
-   :victory?       game/victory?
+   ;; A winning position is not a recorded result. Let find-state perform
+   ;; integrity checks and the authoritative :player-victory transition.
+   :victory?       #(get-in % [:state :winner])
    :current-player game/current-player
    :turn-changed?  organism-turn-changed?
    :on-turn        on-turn
    :humans         humans
    :delay-ms       delay-ms})
 
+(defn- finish-bot-turn!
+  [games-atom game-key db broadcast-fn persist-fn choice-keys next-game]
+  (let [state (:state next-game)]
+    (when persist-fn (persist-fn state))
+    (when (and db (:winner state))
+      (persist/complete-game! db game-key state)
+      (leaderboard/rate-later! db))
+    (swap! games-atom assoc-in [:games game-key :game] next-game)
+    (swap! games-atom update-in [:games game-key :history]
+           (fn [history]
+             (if (= state (last history)) history (conj (vec history) state))))
+    (when broadcast-fn (broadcast-fn choice-keys next-game))))
+
+(defonce ^:private running-games (atom {}))
+
+(defn stop-game!
+  "Retire ownership under the lifecycle lock. A sleeping old runner must not
+   continue in a new incarnation, or release a replacement runner's token."
+  [game-key]
+  (locking (mutations/game-lock game-key)
+    (swap! running-games dissoc game-key)))
+
+(defn- release-runner! [game-key token]
+  (swap! running-games #(if (= token (get % game-key)) (dissoc % game-key) %)))
+
+(defn- next-bot-turn
+  [step initial humans]
+  (loop [current initial n 0]
+    (cond
+      (or (get-in current [:state :winner])
+          (contains? humans (game/current-player current))
+          (and (pos? n) (organism-turn-changed? initial current))) current
+      (>= n 3000) (throw (ex-info "bot step limit reached" {}))
+      :else (if-let [[_ next-game] (step current)]
+              (recur next-game (inc n))
+              (throw (ex-info "bot cannot advance" {}))))))
+
+(defn- bot-authority
+  "Only the current durable roster and bot metadata grant bot authority."
+  [state]
+  (let [players (set (get-in state [:invocation :players]))
+        bot? #(or (contains? (set (:bots state)) %)
+                  (bots/bot? (or (:game-type state) "organism") %))
+        actor (when (:game state) (game/current-player (:game state)))]
+    {:humans (set (remove bot? players))
+     :eligible? (and (contains? players actor) (bot? actor)
+                     (not (get-in state [:game :state :winner])))}))
+
+(defn- run-durable-bots!
+  [db game-key _caller-humans delay-ms]
+  (locking (mutations/game-lock game-key)
+    (let [selected (persist/load-game db game-key)]
+    (when (and (:eligible? (bot-authority selected))
+               (not (contains? @running-games game-key)))
+     (let [token (Object.) incarnation (:incarnation-id selected)]
+      (swap! running-games assoc game-key token)
+      (future
+        (try
+          (let [agent-step (make-agent-step+key db)
+                remaining (atom 20000)
+                step (fn [current]
+                       (when (neg? (swap! remaining dec))
+                         (throw (ex-info "bot computation budget exhausted" {})))
+                       (agent-step current))]
+            (loop []
+              (when
+               (locking (mutations/game-lock game-key)
+                (when (= token (get @running-games game-key))
+                 (let [current (persist/load-game db game-key)
+                       g (:game current)
+                       actor (when g (game/current-player g))
+                       {:keys [eligible? humans]} (bot-authority current)]
+                   (if (or (not= incarnation (:incarnation-id current)) (not eligible?))
+                     ;; Release ownership while holding the command lock, so a
+                     ;; concurrent human handoff cannot lose its scheduling edge.
+                     (do (release-runner! game-key token) false)
+                     (let [result (mutations/execute!
+                                   db game-key actor
+                                   {:operation "bot" :commandId (str (java.util.UUID/randomUUID))
+                                    :expectedRevision (commands/current-revision current)}
+                                   (fn [state]
+                                     {:status :accepted
+                                      :game (next-bot-turn step (:game state) humans)}))]
+                       (= :accepted (:status result)))))))
+                (Thread/sleep delay-ms)
+                (recur))))
+          (catch Exception error
+            (log/warn error "ORGANISM bot stopped; reconnect can retry" game-key))
+          (finally (release-runner! game-key token)))))))))
+
 (defn run-bot-turns!
   "All-bot game runner — used by /organism/generate. No humans."
   [games-atom game-key delay-ms broadcast-fn persist-fn & [db]]
-  (bots/run-bot-loop!
-   (organism-bot-config
-    games-atom game-key #{} delay-ms
-    (fn [choice-keys next-game]
-      (when broadcast-fn (broadcast-fn choice-keys next-game))
-      (when persist-fn (persist-fn (:state next-game))))
-    db)))
+  (if db
+    (run-durable-bots! db game-key #{} delay-ms)
+    (bots/run-bot-loop!
+     (organism-bot-config
+      games-atom game-key #{} delay-ms
+      (partial finish-bot-turn! games-atom game-key nil broadcast-fn persist-fn)))))
 
 (defn play-until-human-or-done
   "Run bot steps until it's a human's turn or the game is over.
@@ -457,14 +552,16 @@
          n 0]
     (let [player (get-in game [:state :player-turn :player])
           round (get-in game [:state :round])
-          winner (game/victory? game)
+          winner (get-in game [:state :winner])
           turn-changed? (or (not= prev-player player) (not= prev-round round))
           new-history (if turn-changed? (conj history (:state game)) history)]
       (cond
         winner
         (do (println "BOT: winner" winner "after" n "steps, history"
                      (count new-history) "round" round)
-            [game new-history])
+            [game (if (= (:state game) (last new-history))
+                    new-history
+                    (conj new-history (:state game)))])
 
         (contains? humans player)
         [game new-history]
@@ -484,13 +581,12 @@
 (defn run-bot-until-human!
   "Mixed game runner — runs bots until a human's turn comes up."
   [games-atom game-key human-players delay-ms broadcast-fn persist-fn & [db]]
-  (bots/run-bot-loop!
-   (organism-bot-config
-    games-atom game-key human-players delay-ms
-    (fn [choice-keys next-game]
-      (when broadcast-fn (broadcast-fn choice-keys next-game))
-      (when persist-fn (persist-fn (:state next-game))))
-    db)))
+  (if db
+    (run-durable-bots! db game-key human-players delay-ms)
+    (bots/run-bot-loop!
+     (organism-bot-config
+      games-atom game-key human-players delay-ms
+      (partial finish-bot-turn! games-atom game-key nil broadcast-fn persist-fn)))))
 
 ;; ── Bot registration ────────────────────────────────────────────────────────
 

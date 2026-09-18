@@ -6,6 +6,7 @@
    [clojure.string :as str]
    [organism.bots :as bots]
    [organism.layout :as layout]
+   [organism.lobby :as lobby]
    [organism.persist :as persist]
    [organism.persist-journey-bots :as bots-db]
    [ring.util.response :as response]))
@@ -67,11 +68,13 @@
 (defn- participant?
   "Only somebody with a stake in the game gets to touch its deletion state —
    whoever created it, or anyone on the roster."
-  [record player]
-  (boolean
-   (and player
-        (or (= player (:created-by record))
-            (contains? (set (get-in record [:invocation :players])) player)))))
+  [game-type record player]
+  (let [bot-set (set (:bots record))]
+    (lobby/member? (:created-by record)
+                   (get-in record [:invocation :players])
+                   player
+                   #(or (contains? bot-set %)
+                        (bots/bot? game-type %)))))
 
 (defn- humans-in
   "The human names on a roster. Bots come from the game's stored :bots set, the
@@ -99,6 +102,10 @@
    `:on-delete` on the spec is called with the game key after a real deletion,
    so the game's ws layer can drop it and tell any open tabs."
   [{:keys [game-type on-delete] :as _spec} db request]
+  (let [result
+        (persist/with-game-deletion!
+         db (-> request :path-params :play)
+         (fn []
   (let [player (get-in request [:session :player])
         game-key (-> request :path-params :play)
         record (persist/find-game-record db game-key)]
@@ -106,7 +113,7 @@
       (nil? record)
       (response/not-found {:error "no such game"})
 
-      (not (participant? record player))
+      (not (participant? game-type record player))
       (response/bad-request {:error "not your game"})
 
       (nothing-at-stake? db game-type record player)
@@ -118,26 +125,31 @@
       :else
       (response/response
        {:marked game-key
-        :deletion (persist/mark-game-for-deletion! db game-key player)}))))
+        :deletion (persist/mark-game-for-deletion! db game-key player)})))))]
+    (if (:error result) (response/status (response/response result) 409) result)))
 
 (defn keep-game!
   "POST handler — the objection. Any participant can cancel a pending deletion,
    which is what keeps the player who marked it from stalling one through."
   [db request]
+  (locking (persist/game-lock (-> request :path-params :play))
   (let [player (get-in request [:session :player])
         game-key (-> request :path-params :play)
-        record (persist/find-game-record db game-key)]
+        record (persist/find-game-record db game-key)
+        game-type (or (:game-type record)
+                      (get-in record [:invocation :game-type])
+                      "organism")]
     (cond
       (nil? record)
       (response/not-found {:error "no such game"})
 
-      (not (participant? record player))
+      (not (participant? game-type record player))
       (response/bad-request {:error "not your game"})
 
       :else
       (do
         (persist/unmark-game-for-deletion! db game-key)
-        (response/response {:kept game-key})))))
+        (response/response {:kept game-key}))))))
 
 ;; ── Common data loaders ──────────────────────────────────────────────────
 

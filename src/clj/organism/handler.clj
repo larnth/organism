@@ -16,7 +16,10 @@
    [organism.routes.future :refer [future-routes]]
    [organism.routes.future-ws :refer [future-ws-routes]]
    [organism.routes.websockets :refer [websocket-routes]]
+   [organism.persist :as persist]
+   [organism.config :refer [env]]
    [reitit.ring :as ring]
+   [ring.util.response :as response]
    [ring.middleware.content-type :refer [wrap-content-type]]
    [ring.middleware.webjars :refer [wrap-webjars]]
    [organism.env :refer [defaults]]
@@ -26,17 +29,54 @@
   :start ((or (:init defaults) (fn [])))
   :stop  ((or (:stop defaults) (fn []))))
 
-(def mongo-connection
-  {:host "localhost"
-   :port 27017
-   :database "organism"})
+(defn mongo-config
+  [config]
+  {:host (or (:mongo-host config) "localhost")
+   :port (let [port (or (:mongo-port config) 27017)]
+           (if (string? port) (parse-long port) port))
+   :database (or (:mongo-database config) "organism")})
+
+;; Backward-compatible default used by standalone migration entry points.
+(def mongo-connection (mongo-config {}))
+
+(defn prepare-database!
+  [database]
+  (persist/ensure-player-identity-index! database)
+  database)
+
+(defn modern-client-entry
+  [_]
+  (if-let [index (response/resource-response "public/modern/index.html")]
+    (-> index
+        (response/content-type "text/html; charset=utf-8")
+        (response/header "Cache-Control" "no-cache"))
+    (-> (response/response "The game client has not been built. Run npm run build --prefix client.")
+        (response/status 503)
+        (response/content-type "text/plain; charset=utf-8")
+        (response/header "Cache-Control" "no-store"))))
+
+(defn health-response
+  [database]
+  (try
+    (db/collections database)
+    (-> (response/response "{\"status\":\"ok\"}")
+        (response/content-type "application/json; charset=utf-8")
+        (assoc-in [:headers "Cache-Control"] "no-store"))
+    (catch Throwable _
+      (-> (response/response "{\"status\":\"unavailable\"}")
+          (response/status 503)
+          (response/content-type "application/json; charset=utf-8")
+          (assoc-in [:headers "Cache-Control"] "no-store")))))
 
 (mount/defstate app-routes
   :start
   (ring/ring-handler
    (ring/router
-    (let [db (db/connect! mongo-connection)]
-      [(home-routes db)
+    (let [db (prepare-database! (db/connect! (mongo-config env)))]
+      [["/healthz" {:get (fn [_] (health-response db))}]
+       ["/modern" {:get modern-client-entry}]
+       ["/modern/" {:get modern-client-entry}]
+       (home-routes db)
        (modern-api-routes db)
        (organism-routes db)
        (journey-routes db)

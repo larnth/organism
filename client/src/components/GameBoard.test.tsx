@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import type { LegalAction } from "../api/contracts";
 import { observerProjection } from "../test/fixtures";
 import { GameBoard } from "./GameBoard";
 
@@ -46,28 +47,140 @@ describe("GameBoard", () => {
     expect(container.querySelectorAll("[data-coordinate]")).toHaveLength(2);
   });
 
-  it("turns a legal source space into a keyboard-accessible action", () => {
-    const action = {
-      actionId: "move-source",
+  it("lets players switch movers locally before confirming a legal destination", () => {
+    const targetA: LegalAction = {
+      actionId: "target-a",
+      kind: "move-to",
+      label: "Move to green 2",
+      actor: "alice",
+      targets: [["green", 2]],
+      options: [],
+      consequences: [],
+    };
+    const targetB: LegalAction = {
+      ...targetA,
+      actionId: "target-b",
+      label: "Move to green 4",
+      targets: [["green", 4]],
+    };
+    const sourceA: LegalAction = {
+      actionId: "source-a",
       kind: "move-from",
-      label: "Move element at purple 2",
+      label: "Move element at purple 3",
+      actor: "alice",
+      source: ["purple", 3],
+      targets: [],
+      options: [],
+      consequences: [],
+      nextActions: [targetA],
+    };
+    const sourceB: LegalAction = {
+      ...sourceA,
+      actionId: "source-b",
+      label: "Move element at purple 4",
+      source: ["purple", 4],
+      nextActions: [targetB],
+    };
+    const onAction = vi.fn();
+    render(
+      <GameBoard
+        projection={{ ...observerProjection, legalActions: [sourceA, sourceB] }}
+        onAction={onAction}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: sourceA.label }));
+    expect(onAction).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: sourceA.label })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: targetA.label })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: sourceB.label }));
+    expect(screen.queryByRole("button", { name: targetA.label })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: sourceB.label })).toHaveAttribute("aria-pressed", "true");
+
+    const destination = screen.getByRole("button", { name: targetB.label });
+    fireEvent.keyDown(destination, { key: "Enter" });
+    expect(onAction).toHaveBeenCalledWith([sourceB, targetB]);
+  });
+
+  it("lets players choose an eater before confirming its legal food source", () => {
+    const foodSource: LegalAction = {
+      actionId: "food-source",
+      kind: "eat-from",
+      label: "Take food from green 2",
+      actor: "alice",
+      targets: [["green", 2]],
+      options: [],
+      consequences: [],
+    };
+    const eater: LegalAction = {
+      actionId: "eater",
+      kind: "eat-to",
+      label: "Eat with element at purple 2",
       actor: "alice",
       source: ["purple", 2],
       targets: [],
+      options: [],
+      consequences: [],
+      nextActions: [foodSource],
+    };
+    const onAction = vi.fn();
+    render(
+      <GameBoard
+        projection={{ ...observerProjection, legalActions: [eater] }}
+        onAction={onAction}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: eater.label }));
+    expect(onAction).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: foodSource.label }));
+    expect(onAction).toHaveBeenCalledWith([eater, foodSource]);
+  });
+
+  it("submits a projected grow destination from the board", () => {
+    const destination: LegalAction = {
+      actionId: "grow-target",
+      kind: "grow-to",
+      label: "Grow into green 3",
+      actor: "alice",
+      targets: [["green", 3]],
       options: [],
       consequences: [],
     };
     const onAction = vi.fn();
     render(
       <GameBoard
-        projection={{ ...observerProjection, legalActions: [action] }}
+        projection={{ ...observerProjection, legalActions: [destination] }}
         onAction={onAction}
       />,
     );
 
-    const space = screen.getByRole("button", { name: action.label });
-    fireEvent.keyDown(space, { key: "Enter" });
-    expect(onAction).toHaveBeenCalledWith(action);
+    fireEvent.click(screen.getByRole("button", { name: destination.label }));
+    expect(onAction).toHaveBeenCalledWith([destination]);
+  });
+
+  it("selects an unambiguous grow payment from its component on the board", () => {
+    const payment: LegalAction = {
+      actionId: "grow-payment",
+      kind: "grow-from",
+      label: "Choose food for growth",
+      actor: "alice",
+      targets: [],
+      options: [[[["purple", 3], 1]]],
+      cost: 1,
+      consequences: [],
+    };
+    const onAction = vi.fn();
+    render(
+      <GameBoard
+        projection={{ ...observerProjection, legalActions: [payment] }}
+        onAction={onAction}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Spend 1 food from purple 3" }));
+    expect(onAction).toHaveBeenCalledWith([payment]);
   });
 
   it("does not turn multi-space introduction previews into ambiguous board actions", () => {

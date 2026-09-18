@@ -63,12 +63,27 @@
 (def ^:private option-phases
   #{:choose-organism :choose-action-type :choose-action :grow-element})
 
+(declare describe-actions)
+
+(def ^:private preview-next-phases
+  {:eat-to #{:eat-from}
+   :grow-element #{:grow-from :grow-to}
+   :grow-from #{:grow-to}
+   :move-from #{:move-to}})
+
 (defn- descriptor
-  [phase raw-choice actor]
+  [phase raw-choice actor next-game]
   (let [safe-choice (json/json-safe raw-choice)
         introduction-spaces (when (= phase :introduce)
                               (keys (:spaces raw-choice)))
-        contribution (when (= phase :grow-from) raw-choice)]
+        contribution (when (= phase :grow-from) raw-choice)
+        preview-phase (get preview-next-phases phase)
+        next-actions (when (and preview-phase
+                                (map? (:state next-game)))
+                       (let [[_ next-phase next-choices]
+                             (choice/find-next-choices next-game)]
+                         (when (contains? preview-phase next-phase)
+                           (describe-actions next-phase next-choices actor))))]
     {:actionId (action-id phase raw-choice)
      :kind (name phase)
      :label (action-label phase raw-choice)
@@ -86,13 +101,15 @@
                 (= phase :grow-from) [(json/json-safe contribution)]
                 :else [])
      :cost (when contribution (reduce + 0 (vals contribution)))
-     :consequences []}))
+     :consequences []
+     :nextActions (or next-actions [])}))
 
 (defn describe-actions
   "Describe immediate legal choices without exposing their resulting games."
   [phase choices actor]
-  (->> (keys choices)
-       (map #(descriptor phase % actor))
+  (->> choices
+       (map (fn [[raw-choice next-game]]
+              (descriptor phase raw-choice actor next-game)))
        (sort-by :actionId)
        vec))
 

@@ -1,169 +1,183 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { fetchCatchUp, fetchGame, GameApiError, submitCommand } from "./api/client";
-import type { CatchUpResponse, GameProjection, LegalAction } from "./api/contracts";
-import { selectNewerProjection } from "./projectionState";
+import { fetchGame, GameApiError, submitCommand, submitUndo, updateLobby } from "./api/client";
+import type { GameProjection, LegalAction } from "./api/contracts";
+import { useLiveGame } from "./useLiveGame";
 import { ObserveGamePage } from "./routes/ObserveGamePage";
-import "./styles/game.css";
+import { LobbyPage } from "./routes/LobbyPage";
+import { CreateGamePage } from "./routes/CreateGamePage";
+import { DiscussionProvider } from "./components/Discussion";
+import "./styles/canvas.css";
 
 type Loader = (gameId: string) => Promise<GameProjection>;
-type UpdateLoader = (gameId: string, afterRevision: number) => Promise<CatchUpResponse>;
+
 type ActionSubmitter = (
   gameId: string,
-  actionId: string,
+  actionId: string | string[],
   expectedRevision: number,
+  commandId: string,
+  instanceId?: string,
 ) => Promise<GameProjection>;
 
-type LoadState =
-  | { kind: "loading" }
-  | { kind: "loaded"; projection: GameProjection }
-  | { kind: "missing" }
-  | { kind: "error"; message: string };
+const sendAction: ActionSubmitter = (game, action, revision, id, instanceId) => submitCommand(game, action, revision, fetch, id, instanceId);
+type PendingCommand = { expectedRevision: number; commandId: string; instanceId?: string } & ({ operation: "undo" } | { actionId: string | string[] });
 
-export function App({
+function storedCommand(key: string | null, instanceId?: string): PendingCommand | null {
+  if (!key) return null;
+  try {
+    const value = JSON.parse(sessionStorage.getItem(key) ?? "null");
+    if (!value || !Number.isSafeInteger(value.expectedRevision) || value.expectedRevision < 0 || typeof value.commandId !== "string" || !value.commandId) return null;
+    if (value.instanceId !== instanceId) return null;
+    if (value.operation === "undo") return { operation: "undo", expectedRevision: value.expectedRevision, commandId: value.commandId, instanceId };
+    if ((typeof value.actionId === "string" && value.actionId.length > 0) || (Array.isArray(value.actionId) && value.actionId.length >= 2 && value.actionId.length <= 3 && value.actionId.every((id: unknown) => typeof id === "string" && id.length > 0))) return { actionId: value.actionId, expectedRevision: value.expectedRevision, commandId: value.commandId, instanceId };
+  } catch { /* Storage may be unavailable in a restricted browser. */ }
+  return null;
+}
+function retainCommand(key: string | null, command: PendingCommand | null) {
+  if (!key) return;
+  try { if (command) sessionStorage.setItem(key, JSON.stringify(command)); else sessionStorage.removeItem(key); }
+  catch { /* In-memory retry remains available. No credentials are stored. */ }
+}
+
+function TableApp({
   gameId,
   initialProjection,
   loadGame = fetchGame,
-  loadUpdates = fetchCatchUp,
-  submitAction = submitCommand,
+  submitAction = sendAction,
   pollInterval = 5000,
 }: {
   gameId: string | null;
   initialProjection?: GameProjection;
   loadGame?: Loader;
-  loadUpdates?: UpdateLoader;
+
   submitAction?: ActionSubmitter;
   pollInterval?: number;
 }) {
-  const [attempt, setAttempt] = useState(0);
-  const [connectionState, setConnectionState] = useState<"connected" | "reconnecting">("connected");
-  const [actionState, setActionState] = useState<"ready" | "submitting" | "error">("ready");
-  const [actionError, setActionError] = useState<string>();
-  const [state, setState] = useState<LoadState>(() =>
-    initialProjection ? { kind: "loaded", projection: initialProjection } : { kind: "loading" },
-  );
-
-  useEffect(() => {
-    if (initialProjection) {
-      setState({ kind: "loaded", projection: initialProjection });
-      return;
-    }
-    if (!gameId) {
-      setState({ kind: "missing" });
-      return;
-    }
-
-    let active = true;
-    setState({ kind: "loading" });
-    loadGame(gameId)
-      .then((projection) => {
-        if (active) setState({ kind: "loaded", projection });
-      })
-      .catch((error: unknown) => {
-        if (!active) return;
-        if (error instanceof GameApiError && error.status === 404) {
-          setState({ kind: "missing" });
-        } else {
-          setState({
-            kind: "error",
-            message: error instanceof Error ? error.message : "The specimen could not be loaded.",
-          });
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [attempt, gameId, initialProjection, loadGame]);
-
-  useEffect(() => {
-    if (initialProjection || !gameId || state.kind !== "loaded") return;
-    let active = true;
-    let timer: number;
-    const sync = async () => {
-      try {
-        const update = await loadUpdates(gameId, state.projection.revision);
-        if (!active) return;
-        const latest = [...update.events].reverse().find((event) => event.projection)?.projection;
-        setConnectionState("connected");
-        if (latest) {
-          setState((current) => current.kind === "loaded"
-            ? { kind: "loaded", projection: selectNewerProjection(current.projection, latest) }
-            : current);
+  const live = useLiveGame(gameId, initialProjection, loadGame, pollInterval);
+  const pending = useRef<PendingCommand | null>(null);
+  const sending = useRef(false);
+  const [actionState, setActionState] = useState<"ready" | "submitting" | "unresolved">("ready");
+  const [feedback, setFeedback] = useState<string>();
+  const deadlines = useRef(new Set<ReturnType<typeof setTimeout>>());
+  const instanceId = live.projection?.instanceId ?? undefined;
+  const storageKey = live.projection?.viewer.player ? `organism:pending:${encodeURIComponent(gameId ?? "")}:${encodeURIComponent(live.projection.viewer.player)}${instanceId ? `:${encodeURIComponent(instanceId)}` : ""}` : null;
+  // Never paint a replacement table with the previous owner's retry controls.
+  useLayoutEffect(() => {
+    const recovered = storedCommand(storageKey, instanceId);
+    pending.current = recovered;
+    sending.current = false;
+    setActionState(recovered ? "unresolved" : "ready");
+    setFeedback(recovered ? "An earlier action still needs confirmation. Retry it safely before making another choice." : undefined);
+  }, [storageKey, instanceId, live.scope]);
+  useEffect(() => () => { for (const timer of deadlines.current) clearTimeout(timer); }, []);
+  const send = async (command: PendingCommand) => {
+    if (!gameId || sending.current) return;
+    sending.current = true;
+    pending.current = command;
+    retainCommand(storageKey, command);
+    setActionState("submitting");
+    setFeedback("Applying action…");
+    const started = live.fence();
+    const life = live.lifecycle.current;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const request = "operation" in command
+        ? submitUndo(gameId, command.expectedRevision, command.commandId, fetch, command.instanceId)
+        : command.instanceId
+          ? submitAction(gameId, command.actionId, command.expectedRevision, command.commandId, command.instanceId)
+          : submitAction(gameId, command.actionId, command.expectedRevision, command.commandId);
+      const result = await Promise.race([request, new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("Confirmation timeout")), 15000);
+        deadlines.current.add(timeout);
+      })]);
+      if (life !== live.lifecycle.current) return;
+      if (started === live.generation.current || result.revision > (live.head.current?.revision ?? -1)) live.accept(result);
+      pending.current = null;
+      setActionState("ready");
+      retainCommand(storageKey, null);
+      setFeedback("Action confirmed.");
+    } catch (error) {
+      if (life !== live.lifecycle.current) return;
+      const definite = error instanceof GameApiError && error.status >= 400 && error.status < 500 && error.message !== "command-in-progress";
+      if (definite) {
+        const refreshed = await live.refresh();
+        if (life !== live.lifecycle.current) return;
+        if (!refreshed) {
+          setActionState("unresolved");
+          setFeedback("The current account could not be confirmed. Reconnect before retrying this action.");
           return;
         }
-      } catch {
-        if (active) setConnectionState("reconnecting");
-      }
-      if (active) timer = window.setTimeout(sync, pollInterval);
-    };
-    timer = window.setTimeout(sync, pollInterval);
-    return () => {
-      active = false;
-      window.clearTimeout(timer);
-    };
-  }, [gameId, initialProjection, loadUpdates, pollInterval, state]);
-
-  const handleAction = async (action: LegalAction) => {
-    if (state.kind !== "loaded" || actionState === "submitting") return;
-    setActionState("submitting");
-    setActionError(undefined);
-    try {
-      const projection = await submitAction(
-        state.projection.gameId,
-        action.actionId,
-        state.projection.revision,
-      );
-      setState((current) => current.kind === "loaded"
-        ? { kind: "loaded", projection: selectNewerProjection(current.projection, projection) }
-        : { kind: "loaded", projection });
-      setActionState("ready");
-    } catch (error) {
-      if (error instanceof GameApiError && error.status === 409 && gameId) {
-        try {
-          const projection = await loadGame(gameId);
-          setState({ kind: "loaded", projection });
-          setActionError("The board changed, so your available choices were refreshed.");
-        } catch {
-          setActionError("The board changed and could not be refreshed yet.");
-        }
+        pending.current = null;
+        retainCommand(storageKey, null);
+        setFeedback(error.status === 409 ? "The board changed. Your choices are being refreshed." : error.message.replaceAll("-", " "));
+        setActionState("ready");
       } else {
-        setActionError(error instanceof Error ? error.message : "That action could not be applied.");
+        setActionState("unresolved");
+        setFeedback("Confirmation was interrupted. Retry the same action to find out whether it was accepted.");
       }
-      setActionState("error");
+    } finally {
+      if (life === live.lifecycle.current) sending.current = false;
+      if (timeout !== undefined) { clearTimeout(timeout); deadlines.current.delete(timeout); }
     }
   };
+  const handleAction = (actions: LegalAction[]) => {
+    const projection = live.head.current;
+    if (!projection?.viewer.canAct || projection.status !== "active" || pending.current || !actions.length) return;
+    void send({ actionId: actions.length === 1 ? actions[0].actionId : actions.map(a => a.actionId), expectedRevision: projection.revision, commandId: crypto.randomUUID(), instanceId: projection.instanceId ?? undefined });
+  };
 
-  if (state.kind === "loaded") {
-    return (
+  if (live.projection) {
+    return <DiscussionProvider key={live.scope} projection={live.projection}>
+      {live.projection.status === "waiting" && live.projection.lobby ? <LobbyPage key={live.scope} projection={live.projection} connection={live.connection} command={async (operation, body) => {
+      if (!gameId || live.head.current?.status !== "waiting") throw new Error("This table has already started.");
+      const started = live.fence();
+      const life = live.lifecycle.current;
+      try {
+        const result = await updateLobby(gameId, operation, body);
+        if (life === live.lifecycle.current && (started === live.generation.current || result.revision > (live.head.current?.revision ?? -1))) live.accept(result);
+        else if (life === live.lifecycle.current) await live.refresh();
+      } catch (error) { if (life === live.lifecycle.current) await live.refresh(); throw error; }
+    }} /> : (
       <ObserveGamePage
-        projection={state.projection}
-        connectionState={connectionState}
-        onAction={state.projection.viewer.canAct ? handleAction : undefined}
-        actionState={actionState}
-        actionError={actionError}
+        key={live.scope}
+        projection={live.projection}
+        connectionState={live.connection}
+        onAction={handleAction}
+        actionState={actionState === "ready" ? "ready" : "submitting"}
+        onUndo={() => {
+          if (live.head.current?.viewer.canUndo && !pending.current) void send({ operation: "undo", expectedRevision: live.head.current.revision, commandId: crypto.randomUUID(), instanceId: live.head.current.instanceId ?? undefined });
+        }}
+        feedback={<div className="table-feedback" role="status">{feedback}{live.error && <p>{live.error}</p>}
+          {actionState === "unresolved" && <button onClick={() => pending.current && void send(pending.current)}>Retry same action</button>}
+        </div>}
       />
-    );
+    )}
+    </DiscussionProvider>;
   }
 
   return (
     <main className="empty-state">
       <div className="empty-state__mark" aria-hidden="true">O</div>
-      <div className="section-label">Organism field lab</div>
-      {state.kind === "loading" ? <h1>Preparing the specimen…</h1> : null}
-      {state.kind === "missing" ? (
+      <div className="section-label">ORGANISM</div>
+      {!live.error && !live.missing ? <h1>Preparing the table…</h1> : null}
+      {live.missing ? (
         <>
           <h1>That game could not be found.</h1>
           <p>Check the game link or return to the game list.</p>
+          <a href="/organism/play">Games &amp; tables</a>
         </>
       ) : null}
-      {state.kind === "error" ? (
+      {live.error && !live.missing ? (
         <>
           <h1>Connection interrupted.</h1>
-          <p>{state.message}</p>
-          <button type="button" onClick={() => setAttempt((value) => value + 1)}>Try again</button>
+          <p>{live.error}</p>
+          <button type="button" onClick={() => void live.refresh()}>Try again</button>
         </>
       ) : null}
     </main>
   );
+}
+
+export function App(props: React.ComponentProps<typeof TableApp> & { view?: string | null }) {
+  return props.view === "create" ? <CreateGamePage /> : <TableApp key={props.gameId} {...props} />;
 }

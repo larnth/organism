@@ -243,9 +243,8 @@
 
 (defn grow-to-choices
   [game elements _]
-  (let [types (group-by :type elements)
-        growers (get types :grow)
-        growable (game/growable-spaces game (map :space growers))]
+  (let [contributors (keys (game/get-action-field game :from))
+        growable (game/growable-spaces game contributors)]
     (partial-map
      (comp
       game/complete-action
@@ -315,6 +314,9 @@
         winner (game/victory? game)]
 
     (cond
+      (:winner state)
+      [:game-over {}]
+
       (= (:advance player-turn) :resolve-conflicts)
       [:resolve-conflicts {:advance (game/check-integrity game player)}]
 

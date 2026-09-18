@@ -11,11 +11,13 @@
 
     {% style "/assets/bulma/css/bulma.min.css" %}
     {% style "/assets/material-icons/css/material-icons.min.css" %}
-    {% style "/css/screen.css" %}
+    {% style "/css/screen.css?v=20260916-game-loader" %}
+    {% style "/css/organism-lobby.css?v=20260916-game-loader" %}
 
     <script type="text/javascript">
       var csrfToken = {{csrf-token|js}};
       var playerKey = {{session-player|js}};
+      var lobbyCreator = {{lobby-creator|js}};
       var playerPreferences = {{preferences|js}};
       var playerGames = null;
       var playKey = {{play-key|js}};
@@ -26,6 +28,6 @@
       var isStats = false;
       var isObserve = false;
     </script>
-    {% script "/js/organism.js" %}
+    {% script "/js/organism.js?v=20260916-game-loader" %}
   </body>
 </html>

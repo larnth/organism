@@ -266,7 +266,11 @@
   [symmetry radius buffer colors notches?]
   (let [field (* 2 radius buffer (count colors))]
     [:svg
-     {:width field :height field}
+     {:class "organism-board-svg"
+      :width field
+      :height field
+      :view-box (str "0 0 " field " " field)
+      :preserve-aspect-ratio "xMidYMid meet"}
      (vec
       (concat
        (build-background symmetry radius buffer colors)
@@ -667,7 +671,8 @@
 (defn valid-invocation?
   [invocation]
   (let [players (:players invocation)
-        players-set (set players)]
+        player-identities (map #(when (string? %) (string/lower-case %)) players)
+        players-set (set player-identities)]
     (and
      (every? (comp not empty?) players)
      (= (count players) (count players-set)))))

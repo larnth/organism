@@ -1,0 +1,85 @@
+/* Traditional create → lobby workflow */
+.organism-create-workflow,
+.organism-lobby-workflow {
+  min-height: 100vh;
+  min-width: 0;
+  padding: 92px clamp(18px, 4vw, 64px) 48px;
+  color: var(--organism-text);
+  background: radial-gradient(circle at 16% 0%, rgba(201,242,123,.09), transparent 30%), radial-gradient(circle at 86% 28%, rgba(90,154,147,.12), transparent 34%), var(--organism-bg);
+}
+.organism-lobby-header { position:absolute; inset:0 0 auto; display:flex; min-width:0; align-items:center; justify-content:space-between; padding:20px clamp(18px,4vw,64px); border-bottom:1px solid var(--organism-line); }
+.organism-lobby-state,.organism-live-indicator { color:var(--organism-accent); font-size:.68rem; font-weight:900; letter-spacing:.17em; }
+.organism-create-card,.organism-lobby-card,.organism-lobby-hero,.organism-private-admission { min-width:0; border:1px solid var(--organism-line); border-radius:24px; background:rgba(24,28,32,.9); box-shadow:var(--organism-shadow); }
+.organism-create-card { width:min(940px,100%); margin:24px auto; padding:clamp(24px,5vw,54px); }
+.organism-create-intro { max-width:650px; margin-bottom:28px; }
+.organism-create-intro h1,.organism-lobby-hero h1 { margin:5px 0 8px; font-size:clamp(2rem,5vw,4rem); line-height:1; overflow-wrap:anywhere; }
+.organism-create-intro p,.organism-lobby-hero p { margin:0; color:var(--organism-muted); line-height:1.6; }
+.organism-create-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 28px; }
+.organism-create-grid .organism-field-group { min-width:0; }
+.organism-create-description { grid-column:1/-1; }
+.organism-create-workflow select { margin-left:0; }
+.organism-create-workflow .organism-game-name-input,.organism-create-workflow .organism-description-input,.organism-lobby-password,.organism-private-admission input { width:100%!important; max-width:100%!important; min-width:0; min-height:48px; margin:8px 0!important; padding:12px 15px!important; border:1px solid var(--organism-line)!important; border-radius:13px!important; color:var(--organism-text)!important; background:var(--organism-panel-soft)!important; font:inherit!important; letter-spacing:.02em!important; }
+.organism-visibility-choice { display:grid; gap:8px; margin-top:8px; }
+.organism-visibility-choice label { display:flex; min-width:0; gap:10px; align-items:flex-start; padding:12px; border:1px solid var(--organism-line); border-radius:13px; cursor:pointer; }
+.organism-visibility-choice label.is-selected { border-color:var(--organism-accent); background:rgba(201,242,123,.07); }
+.organism-visibility-choice span { display:flex; min-width:0; flex-direction:column; }
+.organism-visibility-choice strong,
+.organism-lobby-seat-copy strong,
+.organism-lobby-open-seat strong { color:var(--organism-text); }
+.organism-visibility-choice small { margin-top:3px; color:var(--organism-muted); line-height:1.35; }
+.organism-create-footer,.organism-lobby-launch { display:flex; align-items:center; justify-content:flex-end; gap:12px; margin-top:24px; }
+.organism-create-footer a { display:inline-flex; align-items:center; color:var(--organism-text)!important; }
+.organism-lobby-feedback { width:min(940px,100%); margin:16px auto; padding:11px 14px; border-radius:12px; background:var(--organism-panel-soft); }
+.organism-lobby-feedback.error { color:#ffb7a9; border:1px solid rgba(255,120,100,.35); }
+.organism-lobby-feedback.success { color:var(--organism-accent); border:1px solid rgba(201,242,123,.28); }
+.organism-lobby-hero { display:grid; grid-template-columns:minmax(0,1fr) minmax(260px,.7fr); gap:30px; align-items:end; padding:clamp(24px,4vw,44px); }
+.organism-invite-block { display:grid; min-width:0; gap:8px; }
+.organism-invite-block>span { color:var(--organism-muted); font-size:.68rem; font-weight:800; letter-spacing:.14em; }
+.organism-invite-block code { display:block; min-width:0; padding:11px; overflow:hidden; border-radius:10px; color:var(--organism-text); background:rgba(0,0,0,.3); text-overflow:ellipsis; white-space:nowrap; }
+.organism-invite-block button { justify-self:start; }
+.organism-private-admission { display:grid; gap:4px; width:min(500px,100%); margin:16px 0; padding:16px; }
+.organism-lobby-columns { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(300px,.85fr); gap:20px; margin-top:20px; }
+.organism-lobby-card { padding:clamp(18px,3vw,28px); }
+.organism-lobby-card-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:18px; }
+.organism-lobby-card-heading h2 { margin:4px 0 0; font-size:1.35rem; }
+.organism-lobby-roster { display:grid; gap:10px; }
+.organism-lobby-seat { display:flex; min-width:0; min-height:66px; align-items:center; gap:12px; padding:10px 12px; border:1px solid var(--organism-line); border-left:3px solid var(--seat-color); border-radius:14px; background:var(--organism-panel-soft); }
+.organism-lobby-seat-number { width:18px; flex:0 0 auto; color:var(--organism-muted); font-size:.72rem; }
+.organism-lobby-seat-copy { display:flex; min-width:0; flex:1; flex-direction:column; }
+.organism-lobby-seat-copy strong { overflow-wrap:anywhere; }
+.organism-lobby-seat-copy span,.organism-lobby-open-seat span { color:var(--organism-muted); font-size:.76rem; }
+.organism-lobby-open-seat { display:flex; min-width:0; flex:1; align-items:center; gap:10px; }
+.organism-lobby-open-seat span { flex:1; }
+.organism-ready-pill { flex:0 0 auto; padding:5px 7px; border-radius:999px; color:var(--organism-muted); background:rgba(255,255,255,.06); font-size:.58rem; font-weight:900; letter-spacing:.1em; }
+.organism-ready-pill.is-ready { color:#18200f; background:var(--organism-accent); }
+.organism-lobby-settings { position:relative; }
+.organism-lobby-settings summary { color:var(--organism-muted); cursor:pointer; font-size:.78rem; }
+.organism-lobby-settings>div { position:absolute; z-index:5; right:0; width:270px; padding:12px; border:1px solid var(--organism-line); border-radius:14px; background:var(--organism-panel); box-shadow:var(--organism-shadow); }
+.organism-lobby-settings>div { display:grid; gap:8px; }
+.organism-lobby-settings .organism-field-label { margin-top:4px; color:var(--organism-text); }
+.organism-lobby-setting-input { box-sizing:border-box; width:100%; min-width:0; margin:0; padding:10px 11px; border:1px solid var(--organism-line); border-radius:10px; color:var(--organism-text); background:var(--organism-panel-soft); font:inherit; }
+.organism-lobby-settings textarea { resize:vertical; }
+.organism-lobby-settings small { color:var(--organism-muted); line-height:1.4; }
+.organism-lobby-launch { flex-wrap:wrap; padding-top:18px; border-top:1px solid var(--organism-line); }
+.organism-lobby-launch p { min-width:220px; flex:1; margin:0; color:var(--organism-muted); line-height:1.45; }
+.organism-lobby-chat { display:flex; min-height:420px; flex-direction:column; }
+.organism-lobby-chat .organism-discussion-panel { display:flex; min-height:100%; flex:1; flex-direction:column; margin:0; padding:0; border:0; background:transparent; }
+.organism-lobby-chat .organism-discussion-list { flex:1; max-height:none; min-height:180px; }
+@media (max-width:760px) {
+  .organism-create-workflow,.organism-lobby-workflow { padding:76px 12px 28px; }
+  .organism-lobby-header { padding:15px 14px; }
+  .organism-create-grid,.organism-lobby-hero,.organism-lobby-columns { grid-template-columns:minmax(0,1fr); }
+  .organism-create-card { margin:10px auto; padding:22px 16px; border-radius:19px; }
+  .organism-lobby-hero { gap:20px; padding:22px 17px; }
+  .organism-lobby-card { padding:17px 13px; border-radius:19px; }
+  .organism-create-description { grid-column:auto; }
+  .organism-create-footer { align-items:stretch; flex-direction:column-reverse; }
+  .organism-create-footer>* { justify-content:center; width:100%!important; }
+  .organism-lobby-seat { align-items:flex-start; flex-wrap:wrap; }
+  .organism-lobby-seat-copy { min-width:120px; }
+  .organism-lobby-open-seat { flex-wrap:wrap; }
+  .organism-lobby-open-seat .organism-secondary-button { width:100%; }
+  .organism-lobby-launch { align-items:stretch; flex-direction:column; }
+  .organism-lobby-launch button { width:100%!important; }
+  .organism-lobby-settings>div { position:fixed; inset:auto 12px 12px; width:auto; }
+}

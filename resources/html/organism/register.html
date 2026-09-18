@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ORGANISM — Create your account</title>
+    <link rel="stylesheet" href="/css/registration.css?v=20260915-player-dock">
+    <script src="/js/registration.js?v=20260915-player-dock" defer></script>
+  </head>
+  <body class="organism-registration">
+    {% include "organism/landing-icons.html" %}
+    <a class="skip" href="#registration-form">Skip to registration</a>
+    <div class="shell">
+      <header class="top">
+        <a class="wordmark" href="/organism"><svg class="glyph" aria-hidden="true"><use href="#landing-grow"></use></svg>ORGANISM</a>
+        <a class="back" href="/organism"><span aria-hidden="true">←</span> Back to the game</a>
+      </header>
+      <main class="layout">
+        <aside class="welcome" aria-label="Welcome to ORGANISM">
+          <p class="eyebrow">A little strategy. A life of its own.</p>
+          <h2>Your next move<br><span>starts here.</span></h2>
+          <p class="welcome-copy">Choose your name. Find a table.<br>See what grows.</p>
+          <div class="organisms" aria-hidden="true">
+            <div class="organism eat"><span class="organism-disc"><svg class="glyph"><use href="#landing-eat"></use></svg></span><span>EAT</span></div>
+            <div class="organism grow"><span class="organism-disc"><svg class="glyph"><use href="#landing-grow"></use></svg></span><span>GROW</span></div>
+            <div class="organism move"><span class="organism-disc"><svg class="glyph"><use href="#landing-move"></use></svg></span><span>MOVE</span></div>
+          </div>
+          <p class="quiet-note">No email address. No extra steps.<br>Just your place in the game.</p>
+        </aside>
+        <section class="panel" aria-labelledby="register-title">
+          <p class="eyebrow">New player</p>
+          <h1 id="register-title">Create your account.</h1>
+          <p class="intro">A name, a password, and you’re ready to play.</p>
+          {% if error %}
+          <div class="notice" id="registration-error" role="alert" tabindex="-1" data-error-field="{{error-field}}">
+            <strong>{{error}}</strong>
+            <p>Check your details below and re-enter your password. Already have an account? <a href="{{login-url}}">Log in instead</a>.</p>
+          </div>
+          {% endif %}
+          <form id="registration-form" method="POST" action="/register">
+            {% csrf-field %}
+            <input type="hidden" name="redirect" value="{{redirect}}"/>
+            <div class="field">
+              <div class="label-row"><label for="player">Player name</label></div>
+              <input id="player" name="player" type="text" placeholder="Choose a name" value="{{player}}" required autocomplete="username" autocapitalize="none" spellcheck="false" pattern="{{registration-policy.player-pattern}}" data-max-length="{{registration-policy.player-max-length}}" aria-describedby="player-rules player-feedback">
+              <p class="hint" id="player-rules">1–{{registration-policy.player-max-length}} characters. Start with a letter or number.<br>Spaces, dots, underscores, and hyphens are welcome.</p>
+              <p class="feedback" id="player-feedback" aria-live="polite" aria-atomic="true"></p>
+            </div>
+            <div class="field">
+              <div class="label-row"><label for="password">Password</label></div>
+              <div class="input-row">
+                <input id="password" name="password" type="password" required minlength="{{registration-policy.password-min-length}}" data-max-length="{{registration-policy.password-max-length}}" autocomplete="new-password" aria-describedby="password-rules password-feedback password-caps">
+                <button type="button" class="reveal" data-reveal="password" aria-controls="password" aria-label="Show password" aria-pressed="false" hidden>Show</button>
+              </div>
+              <p class="hint" id="password-rules">{{registration-policy.password-min-length}}–{{registration-policy.password-max-length}} characters. A longer passphrase works well.<br>No special mix of symbols or capitals required.</p>
+              <p class="feedback" id="password-feedback" aria-live="polite" aria-atomic="true"></p>
+              <p class="caps" id="password-caps" role="status" hidden>Caps Lock is on.</p>
+            </div>
+            <div class="field">
+              <div class="label-row"><label for="password-confirm">Confirm password</label></div>
+              <div class="input-row">
+                <input id="password-confirm" name="password-confirm" type="password" required autocomplete="new-password" aria-describedby="password-confirm-feedback password-confirm-caps">
+                <button type="button" class="reveal" data-reveal="password-confirm" aria-controls="password-confirm" aria-label="Show confirmed password" aria-pressed="false" hidden>Show</button>
+              </div>
+              <p class="feedback" id="password-confirm-feedback" aria-live="polite" aria-atomic="true">Enter the same password again.</p>
+              <p class="caps" id="password-confirm-caps" role="status" hidden>Caps Lock is on.</p>
+            </div>
+            <button class="submit" id="create-account" type="submit"><span class="button-label">Create account</span><span class="arrow" aria-hidden="true">→</span></button>
+          </form>
+          <p class="switch">Already have an account? <a href="{{login-url}}">Log in</a></p>
+        </section>
+      </main>
+      <footer class="footer"><p>A game by Ryan Spangler.</p><p>Eat. Grow. Make your move.</p></footer>
+    </div>
+  </body>
+</html>

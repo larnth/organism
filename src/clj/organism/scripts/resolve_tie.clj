@@ -2,15 +2,18 @@
   "End a game that carried on past a tie.
 
      java -cp organism.jar clojure.main -m organism.scripts.resolve-tie <game-key>
-     java -cp organism.jar clojure.main -m organism.scripts.resolve-tie <game-key> --apply
+     java -cp organism.jar clojure.main -m organism.scripts.resolve-tie <game-key> --apply --writers-quiesced
 
    Without --apply it only reports. Run it that way first and check the winner
-   is the one you expect. After applying, re-run the ratings:
+   is the one you expect. Canonical games are refused, even with the flag.
+   Stop the app and all other writers before --writers-quiesced; this is only
+   an acknowledgement, not a cross-process lock. After applying, re-run ratings:
 
      java -cp organism.jar clojure.main -m organism.scripts.rate-players"
   (:require
    [organism.handler :as handler]
    [organism.mongo :as db]
+   [organism.persist :as persist]
    [organism.resolve-tie :as resolve-tie]))
 
 (defn- describe
@@ -32,14 +35,15 @@
         (println "  -> resolved. the overrun is kept in"
                  (resolve-tie/voided-history-key key)))
       (when (= status :overran)
-        (println "  -> dry run, nothing written. re-run with --apply to end it here.")))))
+        (println "  -> dry run. Stop all writers, then use --apply --writers-quiesced to end it here.")))))
 
 (defn -main
   [& args]
   (let [game-key (first (remove #(.startsWith ^String % "--") args))
         apply? (boolean (some #{"--apply"} args))]
+    (when apply? (persist/require-quiesced-writers! args))
     (if-not game-key
-      (do (println "usage: resolve-tie <game-key> [--apply]")
+      (do (println "usage: resolve-tie <game-key> [--apply --writers-quiesced]")
           (System/exit 1))
       (let [connection (db/connect! handler/mongo-connection)
             report (if apply?

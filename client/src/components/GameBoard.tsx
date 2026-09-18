@@ -1,10 +1,18 @@
+import { useState } from "react";
+
 import type { GameProjection, JsonValue, LegalAction } from "../api/contracts";
 import { ElementGlyph } from "./ElementGlyph";
 import { FoodDots } from "./FoodDots";
-import { isSpatialAction } from "./actionPresentation";
+import { growPaymentSource, isBoardAction } from "./actionPresentation";
 import { buildBoardLayout } from "./boardLayout";
+import type { Placement } from "./StartingPlacement";
 
 type Pair = [JsonValue, JsonValue];
+type BoardChoice = {
+  action: LegalAction;
+  path: LegalAction[];
+  selectsSource: boolean;
+};
 
 function pairs(value: JsonValue | undefined): Pair[] {
   if (!Array.isArray(value)) return [];
@@ -25,10 +33,15 @@ function valueObject(value: JsonValue): Record<string, JsonValue> | null {
 export function GameBoard({
   projection,
   onAction,
+  onSelectionChange,
+  placement = [],
 }: {
   projection: GameProjection;
-  onAction?: (action: LegalAction) => void;
+  onAction?: (actions: LegalAction[]) => void;
+  onSelectionChange?: (action: LegalAction | null) => void;
+  placement?: Placement[];
 }) {
+  const [selectedActionId, setSelectedActionId] = useState<string | null>(null);
   const boardName = projection.gameId[0]?.toUpperCase() + projection.gameId.slice(1);
   const game = projection.game ?? {};
   const ringsValue = game.rings;
@@ -88,12 +101,44 @@ export function GameBoard({
     const at = coordinate(rawCoordinate);
     if (at && typeof rawFood === "number") food.set(`${at[0]}:${at[1]}`, rawFood);
   }
-  const actionsByCoordinate = new Map<string, LegalAction>();
-  for (const action of projection.legalActions.filter(({ kind }) => isSpatialAction(kind))) {
-    for (const value of [action.source, ...(action.targets ?? [])]) {
+  const selectedAction = projection.legalActions.find(({ actionId }) => actionId === selectedActionId);
+  const previews = new Map(placement.map(item => [`${item.coordinate[0]}:${item.coordinate[1]}`, item.type]));
+  const startingSpaces = new Set(projection.legalActions.filter(action => action.kind === "introduce").flatMap(action => (action.targets ?? []).map(value => {
+    const at = coordinate(value); return at ? `${at[0]}:${at[1]}` : "";
+  })));
+  const actionsByCoordinate = new Map<string, BoardChoice>();
+  for (const action of projection.legalActions.filter((candidate) =>
+    isBoardAction(candidate, projection.legalActions)
+  )) {
+    const values = action.kind === "grow-from"
+      ? [growPaymentSource(action)]
+      : [action.source, ...(action.targets ?? [])];
+    for (const value of values) {
       if (value === undefined) continue;
       const at = coordinate(value);
-      if (at) actionsByCoordinate.set(`${at[0]}:${at[1]}`, action);
+      if (at) {
+        actionsByCoordinate.set(`${at[0]}:${at[1]}`, {
+          action,
+          path: [action],
+          selectsSource: ["eat-to", "move-from"].includes(action.kind)
+            && Boolean(action.nextActions?.length),
+        });
+      }
+    }
+  }
+  if (selectedAction?.nextActions) {
+    for (const action of selectedAction.nextActions) {
+      for (const value of [action.source, ...(action.targets ?? [])]) {
+        if (value === undefined) continue;
+        const at = coordinate(value);
+        if (at) {
+          actionsByCoordinate.set(`${at[0]}:${at[1]}`, {
+            action,
+            path: [selectedAction, action],
+            selectsSource: false,
+          });
+        }
+      }
     }
   }
 
@@ -136,21 +181,40 @@ export function GameBoard({
             const player = typeof element?.player === "string" ? element.player : null;
             const type = typeof element?.type === "string" ? element.type : null;
             const pieceColor = player ? playerColors.get(player) ?? "#79e5b0" : null;
-            const action = actionsByCoordinate.get(key);
-            const activate = action && onAction ? () => onAction(action) : undefined;
+            const choice = actionsByCoordinate.get(key);
+            const action = choice?.action;
+            const actionLabel = action?.kind === "grow-from"
+              ? `Spend ${action.cost ?? 0} food from ${ring} ${index}`
+              : action?.label;
+            const sourceSelected = choice?.selectsSource && action?.actionId === selectedActionId;
+            const actionClass = choice?.selectsSource
+              ? " board-location--source"
+              : choice && choice.path.length > 1 ? " board-location--destination" : "";
+            const activate = choice && onAction ? () => {
+              if (choice.selectsSource) {
+                const nextAction = selectedActionId === action?.actionId ? null : action ?? null;
+                setSelectedActionId(nextAction?.actionId ?? null);
+                onSelectionChange?.(nextAction);
+              } else {
+                onAction(choice.path);
+              }
+            } : undefined;
             return (
               <g
                 key={key}
                 data-coordinate={key}
-                aria-label={action?.label ?? `${ring} ${index}`}
-                className={action ? "board-location board-location--action" : "board-location"}
+                aria-label={actionLabel ?? `${ring} ${index}`}
+                aria-pressed={choice?.selectsSource ? sourceSelected : undefined}
+                className={action
+                  ? `board-location board-location--action${actionClass}${sourceSelected ? " board-location--selected" : ""}`
+                  : `board-location${startingSpaces.has(key) ? " board-location--preview" : ""}`}
                 role={action ? "button" : undefined}
                 tabIndex={action ? 0 : undefined}
                 onClick={activate}
-                onKeyDown={action && onAction ? (event) => {
+                onKeyDown={activate ? (event) => {
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
-                    onAction(action);
+                    activate();
                   }
                 } : undefined}
               >
@@ -176,6 +240,7 @@ export function GameBoard({
                     />
                   </g>
                 ) : null}
+                {!element && previews.has(key) ? <g className="placement-preview" transform={`translate(${x} ${y})`}><ElementGlyph type={previews.get(key)!} color="#c7f59b" food={0} radius={layout.cellRadius} /></g> : null}
               </g>
             );
           })}

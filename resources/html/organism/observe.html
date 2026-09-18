@@ -11,7 +11,8 @@
 
     {% style "/assets/bulma/css/bulma.min.css" %}
     {% style "/assets/material-icons/css/material-icons.min.css" %}
-    {% style "/css/screen.css" %}
+    {% style "/css/screen.css?v=20260915-realtime-lobbies" %}
+    {% style "/css/organism-community.css?v=20260916-community" %}
 
     <script type="text/javascript">
       var csrfToken = {{csrf-token|js}};
@@ -26,6 +27,6 @@
       var isObserve = true;
       var observeGames = {{observe-games|js}};
     </script>
-    {% script "/js/organism.js" %}
+    {% script "/js/organism.js?v=20260915-realtime-lobbies" %}
   </body>
 </html>

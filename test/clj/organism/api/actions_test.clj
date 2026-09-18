@@ -2,6 +2,7 @@
   (:require
    [clojure.test :refer :all]
    [organism.api.actions :as actions]
+   [organism.choice :as choice]
    [organism.examples :as examples]))
 
 (def representative-choices
@@ -31,7 +32,7 @@
         (is (= (count choices) (count descriptors)))
         (doseq [descriptor descriptors]
           (is (= #{:actionId :kind :label :actor :source :targets
-                   :options :cost :consequences}
+                   :options :cost :consequences :nextActions}
                  (set (keys descriptor))))
           (is (= (name phase) (:kind descriptor)))
           (is (= "alice" (:actor descriptor)))
@@ -58,6 +59,61 @@
   (is (empty? (actions/resolve-action :choose-action
                                       {:eat {:state :eat}}
                                       "not-a-legal-action"))))
+
+(deftest move-sources-preview-their-server-derived-legal-destinations
+  (with-redefs [choice/find-next-choices
+                (fn [game]
+                  [game :move-to {[:green 3] {:state :moved-three}
+                                  [:green 4] {:state :moved-four}}])]
+    (let [actions (actions/describe-actions
+                   :move-from
+                   {[:purple 4] {:state {}}}
+                   "alice")
+          source (first actions)]
+      (is (= #{["green" 3] ["green" 4]}
+             (set (map (comp first :targets) (:nextActions source)))))
+      (is (every? #(= "move-to" (:kind %)) (:nextActions source)))
+      (is (every? #(not (contains? % :game)) (:nextActions source))))))
+
+(deftest eaters-preview-their-server-derived-food-sources
+  (with-redefs [choice/find-next-choices
+                (fn [game]
+                  [game :eat-from {[:green 2] {:state :ate-two}
+                                   [:green 3] {:state :ate-three}}])]
+    (let [source (first (actions/describe-actions
+                         :eat-to
+                         {[:purple 2] {:state {}}}
+                         "alice"))]
+      (is (= #{["green" 2] ["green" 3]}
+             (set (map (comp first :targets) (:nextActions source)))))
+      (is (every? #(= "eat-from" (:kind %)) (:nextActions source))))))
+
+(deftest grow-choices-preview-payments-and-destinations
+  (with-redefs [choice/find-next-choices
+                (fn [game]
+                  (case (get-in game [:state :stage])
+                    :payment [game :grow-from {{[:blue 0] 1} {:state {:stage :target}}
+                                               {[:orange 1] 1} {:state {:stage :target}}}]
+                    :target [game :grow-to {[:blue 1] {:state {:stage :done}}}]))]
+    (let [grow-choice (first (actions/describe-actions
+                              :grow-element
+                              {:eat {:state {:stage :payment}}}
+                              "alice"))
+          payments (:nextActions grow-choice)]
+      (is (= 2 (count payments)))
+      (is (every? #(= "grow-from" (:kind %)) payments))
+      (is (every? #(= 1 (:cost %)) payments))
+      (is (every? #(= ["grow-to"] (mapv :kind (:nextActions %))) payments)))))
+
+(deftest grow-choice-previews-destinations-after-a-forced-payment
+  (with-redefs [choice/find-next-choices
+                (fn [game]
+                  [game :grow-to {[:blue 1] {:state {:stage :done}}}])]
+    (let [grow-choice (first (actions/describe-actions
+                              :grow-element
+                              {:eat {:state {:stage :target}}}
+                              "alice"))]
+      (is (= ["grow-to"] (mapv :kind (:nextActions grow-choice)))))))
 
 (deftest canonical-engine-produces-introduction-actions
   (let [{:keys [game phase actions]}

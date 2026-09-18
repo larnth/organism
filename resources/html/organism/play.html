@@ -7,12 +7,21 @@
   </head>
   <body>
     <div id="organism">
+      <main class="organism-game-loader" role="status" aria-live="polite" aria-label="Opening game">
+        <div class="organism-game-loader-card">
+          <span class="organism-game-loader-mark" aria-hidden="true">O</span>
+          <div class="organism-game-loader-spinner" aria-hidden="true"><span></span></div>
+          <p class="organism-eyebrow">CONNECTING</p>
+          <h1>Opening table</h1>
+          <p>Checking whether this table is a lobby or a game in progress…</p>
+        </div>
+      </main>
     </div>
 
     <!-- scripts and styles -->
     {% style "/assets/bulma/css/bulma.min.css" %}
     {% style "/assets/material-icons/css/material-icons.min.css" %}
-    {% style "/css/screen.css" %}
+    {% style "/css/screen.css?v=20260916-game-loader" %}
 
     <script type="text/javascript">
       var csrfToken = {{csrf-token|js}};
@@ -28,6 +37,6 @@
       console.log("player key: " + playerKey);
       console.log("play key: " + playKey);
     </script>
-    {% script "/js/organism.js" %}
+    {% script "/js/organism.js?v=20260916-game-loader" %}
   </body>
 </html>

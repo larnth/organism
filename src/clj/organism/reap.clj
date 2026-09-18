@@ -1,14 +1,13 @@
 (ns organism.reap
   "Sweep away games whose deletion grace period ran out with nobody objecting.
 
-   A mark is cleared by any move (persist/update-player-game!) and by any
+   A mark is atomically cleared by canonical acceptance and by any
    participant pressing keep, so a game only ever reaches the reaper when the
    whole table stayed silent for the entire window.
 
-   The activity check here is a second belt. Bot turns write history through
-   update-state! without touching the player-games records, so an all-bot game
-   can keep moving without ever clearing its mark — the last history entry is
-   the only signal that catches that."
+   Activity comes from the canonical head, with an ObjectId fallback for old
+   history. Candidate classification is rechecked under the mutation lock.
+   Standalone callers must stop app writers; local locks are not distributed."
   (:require
    [organism.mongo :as db]
    [organism.persist :as persist]))
@@ -36,19 +35,26 @@
   ([db] (sweep! db {}))
   ([db {:keys [dry-run? now]}]
    (let [now (or now (persist/now-seconds))
-         {revived true doomed false} (classify db now)]
-     (doseq [{:keys [key deletion]} doomed]
-       (if dry-run?
-         (println "would delete" key "- marked by" (:marked-by deletion))
-         (do
-           (println "reaping" key "- marked by" (:marked-by deletion))
-           (persist/delete-game! db key))))
-     (doseq [{:keys [key]} revived]
-       (if dry-run?
-         (println "would clear stale mark on" key "- it moved again")
-         (persist/unmark-game-for-deletion! db key)))
+         candidates (mapcat val (classify db now))
+         results
+         (reduce
+          (fn [result {:keys [key]}]
+            (locking (persist/game-lock key)
+              ;; Classification is only a candidate list. Re-read the mark and
+              ;; authoritative activity inside the same boundary as acceptance.
+              (let [record (persist/find-published-game db key)
+                    {:keys [deadline marked-at]} (:deletion record)
+                    activity (when record (persist/last-activity-at db key))]
+                (if (and deadline (< deadline now))
+                  (if (and activity (> activity (or marked-at 0)))
+                    (do (when-not dry-run? (persist/unmark-game-for-deletion! db key))
+                        (update result :kept conj key))
+                    (do (when-not dry-run? (persist/delete-game! db key))
+                        (update result :deleted conj key)))
+                  result))))
+          {:deleted [] :kept []} candidates)]
      {:dry-run? (boolean dry-run?)
-      :deleted-count (count doomed)
-      :deleted (mapv :key doomed)
-      :kept-count (count revived)
-      :kept (mapv :key revived)})))
+      :deleted-count (count (:deleted results))
+      :deleted (:deleted results)
+      :kept-count (count (:kept results))
+      :kept (:kept results)})))

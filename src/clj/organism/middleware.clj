@@ -12,6 +12,11 @@
     [ring.middleware.session :refer [wrap-session]]
     [ring.middleware.session.cookie :refer [cookie-store]]
     [ring.middleware.defaults :refer [site-defaults wrap-defaults]])
+  (:import
+   [java.net URI]
+   [java.nio.charset StandardCharsets]
+   [java.security MessageDigest]
+   [java.util Arrays])
   )
 
 (defn wrap-internal-error [handler]
@@ -43,15 +48,87 @@
          wrapped)
        request))))
 
-;; 16-byte key for signing session cookies. Sessions survive server restarts.
-(defonce session-store
-  (cookie-store {:key (.getBytes "organism-secret!" "UTF-8")}))
+(defn validate-production-config!
+  [config]
+  (when (:prod config)
+    (let [secret (:session-secret config)
+          public-origin (:public-origin config)]
+      (when-not (and (string? secret) (>= (count secret) 32))
+        (throw (ex-info "SESSION_SECRET must contain at least 32 characters in production" {})))
+      (when-not (and (string? public-origin)
+                     (re-matches #"https://[^/]+" public-origin))
+        (throw (ex-info "PUBLIC_ORIGIN must be one HTTPS origin in production" {})))))
+  config)
+
+(defn- cookie-key
+  [config]
+  (let [secret (or (:session-secret config) "organism-development-session-secret")
+        digest (.digest (MessageDigest/getInstance "SHA-256")
+                        (.getBytes secret StandardCharsets/UTF_8))]
+    (Arrays/copyOf digest 16)))
+
+(defn session-store-for
+  [config]
+  (validate-production-config! (assoc config :public-origin
+                                      (or (:public-origin config)
+                                          (when-not (:prod config) "http://localhost"))))
+  (cookie-store {:key (cookie-key config)}))
+
+(defn session-cookie-attrs
+  [config]
+  {:http-only true
+   :max-age (* 60 60 24 30)
+   :same-site :lax
+   :secure (boolean (:prod config))})
+
+(defn- websocket-request?
+  [request]
+  (= "websocket" (some-> (get-in request [:headers "upgrade"]) clojure.string/lower-case)))
+
+(defn wrap-require-origin
+  ([handler]
+   (wrap-require-origin handler env))
+  ([handler config]
+   (validate-production-config! config)
+   (fn [request]
+     (let [protected? (or (#{:post :put :patch :delete} (:request-method request))
+                          (websocket-request? request))
+           origin (get-in request [:headers "origin"])]
+       (if (and (:prod config)
+                protected?
+                (not= (:public-origin config) origin))
+         {:status 403
+          :headers {"Content-Type" "application/json; charset=utf-8"
+                    "Cache-Control" "no-store"}
+          :body "{\"error\":\"origin-not-allowed\"}"}
+         (handler request))))))
+
+(defn wrap-public-origin
+  ([handler]
+   (wrap-public-origin handler env))
+  ([handler config]
+   (if-not (:prod config)
+     handler
+     (let [origin (URI. (:public-origin (validate-production-config! config)))
+           scheme (keyword (.getScheme origin))
+           host (.getHost origin)
+           port (let [configured (.getPort origin)]
+                  (if (neg? configured)
+                    (if (= :https scheme) 443 80)
+                    configured))]
+       (fn [request]
+         (handler (-> request
+                      (assoc :scheme scheme
+                             :server-name host
+                             :server-port port)
+                      (assoc-in [:headers "host"] host))))))))
 
 (defn wrap-base [handler]
+  (validate-production-config! env)
   (-> ((:middleware defaults) handler)
       wrap-flash
-      (wrap-session {:store session-store
-                     :cookie-attrs {:http-only true :max-age (* 60 60 24 30)}})
+      (wrap-session {:store (session-store-for env)
+                     :cookie-attrs (session-cookie-attrs env)})
       (wrap-defaults
         (-> site-defaults
             (assoc-in [:security :anti-forgery] false)
@@ -61,4 +138,5 @@
       ;; those responses. It only touches file-backed bodies, so pages fall
       ;; through untouched.
       wrap-range
+      wrap-public-origin
       wrap-internal-error))

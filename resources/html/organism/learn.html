@@ -6,22 +6,26 @@
     <title>ORGANISM - learn</title>
     {% style "/assets/bulma/css/bulma.min.css" %}
     {% style "/css/screen.css" %}
+    {% style "/css/organism-community.css?v=20260916-community" %}
     <style>
-      body { background-color: #111; color: #ccc; margin: 0; }
+      body { background-color: var(--organism-bg); color: var(--organism-text); margin: 0; }
       .learn { max-width: 1100px; margin: 0 auto; padding: 2.5rem 1.5rem 6rem; }
       .learn a { text-decoration: none; }
 
-      .back { color: #666; font-size: 0.95rem; }
-      .back:hover { color: #ccc; }
+      .learn-topbar { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:2rem; }
+      .learn-wordmark { display:inline-flex; min-height:44px; align-items:center; color:var(--organism-accent); font:700 11px/1.4 ui-monospace,monospace; letter-spacing:.17em; }
+
+      .back { display:inline-flex; align-items:center; min-height:44px; color: var(--organism-muted); font-size: 0.95rem; }
+      .back:hover { color: var(--organism-text); }
 
       h1.learn-title {
         color: #eee; font-size: 2.2rem; letter-spacing: 0.25em;
         text-transform: uppercase; margin: 1.5rem 0 0.35rem;
       }
-      .learn-sub { color: #666; margin-bottom: 3rem; }
+      .learn-sub { color: var(--organism-muted); margin-bottom: 3rem; }
 
       .section-label {
-        color: #555; font-size: 0.75rem; text-transform: uppercase;
+        color: var(--organism-muted); font-size: 0.75rem; text-transform: uppercase;
         letter-spacing: 0.1em; margin: 3.5rem 0 1.25rem;
         border-bottom: 1px solid #222; padding-bottom: 0.5rem;
       }
@@ -29,18 +33,18 @@
       /* rulebook */
       .rulebook { display: flex; gap: 1.75rem; align-items: center; flex-wrap: wrap; }
       .rulebook img {
-        width: 220px; border-radius: 4px; display: block;
+        width: 220px; border-radius: 16px; display: block;
         border: 1px solid #222; transition: border-color 0.15s;
       }
       .rulebook a:hover img { border-color: #555; }
-      .rulebook-meta { color: #888; max-width: 26rem; line-height: 1.6; }
+      .rulebook-meta { color: var(--organism-muted); max-width: 26rem; line-height: 1.6; }
       .rulebook-meta strong { color: #ddd; font-weight: normal; font-size: 1.15rem; }
-      .meta-line { color: #555; font-size: 0.8rem; letter-spacing: 0.08em;
+      .meta-line { color: var(--organism-muted); font-size: 0.8rem; letter-spacing: 0.08em;
                    text-transform: uppercase; margin-top: 0.5rem; }
 
       /* diagram */
       .diagram img {
-        width: 100%; max-width: 760px; display: block; border-radius: 4px;
+        width: 100%; max-width: 760px; display: block; border-radius: 16px;
         border: 1px solid #222; transition: border-color 0.15s;
       }
       .diagram a:hover img { border-color: #555; }
@@ -54,14 +58,17 @@
       .clip:first-child { border-top: none; padding-top: 0.5rem; }
       .clip video {
         flex: 0 0 300px; width: 300px; aspect-ratio: 1 / 1; display: block;
-        border-radius: 4px; background: #000; border: 1px solid #222;
+        border-radius: 16px; background: #000; border: 1px solid #30383d;
       }
       .clip-text { flex: 1; min-width: 0; }
+      video[hidden], .video-error[hidden] { display: none; }
+      .video-error { color: #ddd; margin-top: 0.75rem; }
+      .video-error a { color: #d0f57c; text-decoration: underline; }
       .clip h3 {
         color: #ddd; font-size: 1.15rem; letter-spacing: 0.2em;
         text-transform: uppercase; margin: 0 0 0.6rem;
       }
-      .clip p { color: #888; font-size: 1.05rem; line-height: 1.6; margin: 0; }
+      .clip p { color: var(--organism-muted); font-size: 1.05rem; line-height: 1.6; margin: 0; }
 
       @media (max-width: 720px) {
         .clip { flex-direction: column; align-items: stretch; gap: 1rem; }
@@ -71,14 +78,18 @@
       /* playthrough */
       .playthrough video {
         width: 100%; max-width: 620px; display: block;
-        border-radius: 4px; background: #000; border: 1px solid #222;
+        border-radius: 16px; background: #000; border: 1px solid #30383d;
       }
-      .playthrough p { color: #777; margin-top: 0.85rem; }
+      .playthrough p { color: var(--organism-muted); margin-top: 0.85rem; }
+      .learn-cta { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-top:3.5rem; padding:22px; border:1px solid var(--organism-line); border-radius:20px; background:var(--organism-panel); }
+      .learn-cta p { margin:0; color:var(--organism-muted); }
+      .learn-cta a { display:inline-flex; align-items:center; min-height:48px; padding:10px 15px; border-radius:12px; color:#17200e; background:var(--organism-accent); font-weight:700; white-space:nowrap; }
+      @media (max-width: 520px) { .learn-cta { align-items:stretch; flex-direction:column; } .learn-cta a { justify-content:center; } }
     </style>
   </head>
   <body>
     <div class="learn">
-      <nav><a class="back" href="/organism">&larr; organism</a></nav>
+      <nav class="learn-topbar"><a class="learn-wordmark" href="/organism">O&nbsp; / &nbsp;ORGANISM</a><a class="back" href="/organism">&larr; Back home</a></nav>
 
       <h1 class="learn-title">learn</h1>
       <p class="learn-sub">the rulebook, the diagram, and examples.</p>
@@ -108,10 +119,13 @@
       <div class="clips">
         {% for clip in clips %}
         <div class="clip">
-          <video src="/video/{{clip.file}}" muted loop playsinline preload="metadata"></video>
+          <video src="/video/{{clip.file}}?v=20260915-learning-media"
+                 poster="/video/{{clip.poster}}" aria-label="{{clip.title}} example"
+                 muted loop controls playsinline preload="none"></video>
           <div class="clip-text">
             <h3>{{clip.title}}</h3>
             <p>{{clip.caption}}</p>
+            <p class="video-error" hidden role="status">Video unavailable. <a href="/img/organism-rulebook.pdf">Read the complete rules</a>.</p>
           </div>
         </div>
         {% endfor %}
@@ -120,10 +134,15 @@
       <!-- ── playthrough ──────────────────────────────────────────────── -->
       <div class="section-label">a game</div>
       <div class="playthrough">
-        <video src="/video/zach-dan-ryan-play.mp4" poster="/video/zach-dan-ryan-play.jpg"
-               controls playsinline preload="none"></video>
+        <video src="/video/zach-dan-ryan-play.mp4?v=20260915-learning-media" poster="/video/zach-dan-ryan-play.jpg"
+               aria-label="Example game playthrough" controls playsinline preload="none"></video>
         <p>an example of play</p>
+        <p class="video-error" hidden role="status">Video unavailable. <a href="/img/organism-rulebook.pdf">Read the complete rules</a>.</p>
       </div>
+      <section class="learn-cta" aria-label="Start playing">
+        <p>Ready to see what grows?</p>
+        <a href="/login?redirect=/organism/play">Find or create a game →</a>
+      </section>
     </div>
 
     <script>
@@ -132,6 +151,19 @@
       // downloads ten videos at once.
       (function () {
         var clips = document.querySelectorAll('.clip video');
+        document.querySelectorAll('video').forEach(function (video) {
+          video.addEventListener('error', function () {
+            video.hidden = true;
+            video.closest('.clip, .playthrough').querySelector('.video-error').hidden = false;
+          });
+        });
+        // Posters and native controls remain useful with no JS, denied
+        // autoplay, or reduced motion. Never autoplay for reduced motion.
+        var reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+        reducedMotion.addEventListener('change', function (event) {
+          if (event.matches) clips.forEach(function (video) { video.pause(); });
+        });
+        if (reducedMotion.matches) return;
         if (!('IntersectionObserver' in window)) {
           clips.forEach(function (v) { v.autoplay = true; v.play().catch(function () {}); });
           return;
@@ -139,7 +171,7 @@
         var seen = new IntersectionObserver(function (entries) {
           entries.forEach(function (entry) {
             var video = entry.target;
-            if (entry.isIntersecting) {
+            if (entry.isIntersecting && !reducedMotion.matches) {
               video.play().catch(function () {});
             } else {
               video.pause();

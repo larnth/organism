@@ -6,6 +6,7 @@
 
 (defn migrate!
   [db]
+  (persist/assert-legacy-database! db)
   (let [games (db/find-all db :games)]
     (doseq [game games]
       (let [game-key (:key game)
@@ -15,6 +16,7 @@
 
 (defn purge-player-games!
   [db]
+  (persist/assert-legacy-database! db)
   (let [games (db/find-all db :games)]
     (doseq [game games]
       (let [game-key (:key game)
@@ -24,7 +26,8 @@
           (db/drop! db (persist/player-games-key player)))))))
 
 (defn -main
-  []
+  [& args]
+  (persist/require-quiesced-writers! args)
   (let [db (db/connect! handler/mongo-connection)]
     (println "migrating initial player games")
     (purge-player-games! db)

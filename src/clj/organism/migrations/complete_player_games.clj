@@ -6,6 +6,7 @@
 
 (defn migrate!
   [db]
+  (persist/assert-legacy-database! db)
   (let [players (persist/load-players db)]
     (doseq [player players]
       (println "completing player games for" player)
@@ -23,7 +24,8 @@
                {:witness history-count}))))))))
 
 (defn -main
-  []
+  [& args]
+  (persist/require-quiesced-writers! args)
   (let [db (db/connect! handler/mongo-connection)]
     (println "completing player games")
     (migrate! db)))

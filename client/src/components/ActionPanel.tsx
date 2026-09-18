@@ -1,5 +1,5 @@
 import type { LegalAction } from "../api/contracts";
-import { isSpatialAction } from "./actionPresentation";
+import { isBoardAction } from "./actionPresentation";
 
 const prompts: Record<string, string> = {
   introduce: "Place your starting organism",
@@ -24,38 +24,67 @@ function coordinateLabel(value: unknown) {
     : "the board edge";
 }
 
+function growthPaymentLabel(action: LegalAction, index: number) {
+  const contribution = action.options?.[0];
+  if (!Array.isArray(contribution)) return `Food plan ${index + 1} · ${action.cost ?? 0} food`;
+  const sources = contribution.flatMap((entry) => {
+    if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[1] !== "number") return [];
+    return [`${coordinateLabel(entry[0])} ×${entry[1]}`];
+  });
+  const cost = typeof action.cost === "number" ? action.cost : 0;
+  return cost === 0
+    ? "Grow without spending food"
+    : `Spend ${cost} food${sources.length > 0 ? ` · ${sources.join(", ")}` : ""}`;
+}
+
 function buttonLabel(action: LegalAction, index: number) {
   if (action.kind === "introduce") {
     return `Starting position ${index + 1} · near ${coordinateLabel(action.targets?.[0])}`;
   }
   if (action.kind === "grow-from") {
-    return `Food plan ${index + 1} · ${action.cost ?? 0} food`;
+    return growthPaymentLabel(action, index);
   }
   return action.label ?? action.kind;
 }
 
 export function ActionPanel({
   actions,
+  selectedAction,
   onAction,
+  onBack,
+  previousChoice,
   state,
   error,
 }: {
   actions: LegalAction[];
-  onAction: (action: LegalAction) => void;
+  selectedAction?: LegalAction;
+  onAction: (actions: LegalAction[]) => void;
+  onBack?: () => void;
+  previousChoice?: LegalAction;
   state: "ready" | "submitting" | "error";
   error?: string;
 }) {
   const kind = actions[0]?.kind;
-  const prompt = kind ? prompts[kind] ?? "Choose an action" : "Waiting for the next choice";
-  const buttons = actions.filter((action) => !isSpatialAction(action.kind));
+  const destinationCount = selectedAction?.nextActions?.length ?? 0;
+  const nextKind = selectedAction?.nextActions?.[0]?.kind;
+  const choiceName = nextKind === "eat-from" ? "food source" : "destination";
+  const prompt = destinationCount > 0
+    ? prompts[nextKind ?? ""] ?? "Choose the next step"
+    : kind ? prompts[kind] ?? "Choose an action" : "Waiting for the next choice";
+  const boardActions = actions.filter((action) => isBoardAction(action, actions));
+  const buttons = actions.filter((action) => !isBoardAction(action, actions));
 
   return (
     <section className="action-panel surface" aria-label="Your turn">
       <div className="section-label">Your turn</div>
       <h2>{prompt}</h2>
-      {isSpatialAction(kind ?? "") ? (
+      {boardActions.length > 0 ? (
         <p className="action-panel__hint">
-          {actions.length === 1 ? "The available space is" : `${actions.length} available spaces are`} highlighted on the board.
+          {kind === "grow-from"
+            ? `${boardActions.length === 1 ? "The available component is" : `${boardActions.length} available components are`} highlighted on the board.`
+            : destinationCount > 0
+            ? `${destinationCount} legal ${choiceName}${destinationCount === 1 ? " is" : "s are"} highlighted on the board.`
+            : `${actions.length === 1 ? "The available space is" : `${actions.length} available spaces are`} highlighted on the board.`}
         </p>
       ) : null}
       {buttons.length > 0 ? (
@@ -65,12 +94,17 @@ export function ActionPanel({
               type="button"
               key={action.actionId}
               disabled={state === "submitting"}
-              onClick={() => onAction(action)}
+              onClick={() => onAction([action])}
             >
               {buttonLabel(action, index)}
             </button>
           ))}
         </div>
+      ) : null}
+      {onBack && previousChoice ? (
+        <button className="action-panel__back" type="button" disabled={state === "submitting"} onClick={onBack}>
+          {previousChoice.kind === "grow-from" ? "Change payment" : "Change growth choice"}
+        </button>
       ) : null}
       <div className={`action-feedback action-feedback--${state}`} aria-live="polite">
         {state === "submitting" ? "Applying action…" : null}

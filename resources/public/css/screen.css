@@ -1,6 +1,173 @@
 html,
 body {
 	  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    margin: 0;
+    min-width: 0;
+    background: #222;
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+#organism {
+    width: 100%;
+    min-width: 0;
+}
+
+.organism-shell {
+    display: grid !important;
+    width: 100%;
+    min-width: 0;
+    align-items: start;
+}
+
+.organism-create-shell {
+    grid-template-columns: minmax(320px, 0.85fr) minmax(460px, 1.5fr) minmax(280px, 0.75fr);
+}
+
+.organism-game-shell {
+    grid-template-columns: minmax(340px, 0.72fr) minmax(500px, 1.45fr);
+}
+
+.organism-create-sidebar,
+.organism-status-sidebar,
+.organism-game-sidebar,
+.organism-board-stage {
+    width: auto;
+    min-width: 0;
+}
+
+.organism-board-stage {
+    align-self: start;
+}
+
+.organism-board-svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-width: 100%;
+}
+
+.organism-create-form,
+.organism-game-info-panel,
+.organism-chat-panel {
+    min-width: 0;
+}
+
+.organism-player-search {
+    width: min(100%, 366px);
+    min-width: 0;
+}
+
+.organism-player-banner {
+    padding-left: clamp(24px, 3vw, 60px) !important;
+    padding-right: clamp(24px, 3vw, 60px) !important;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.organism-player-banner h1,
+.organism-player-banner h1 a {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.organism-history-svg {
+    display: block;
+    width: 100%;
+    max-width: 300px;
+    height: 50px;
+    margin-left: 0 !important;
+}
+
+@media (max-width: 1180px) {
+    .organism-create-shell {
+        grid-template-columns: minmax(320px, 0.8fr) minmax(440px, 1.2fr);
+    }
+
+    .organism-status-sidebar {
+        grid-column: 1 / -1;
+    }
+
+    .organism-status-sidebar .organism-chat-panel {
+        margin-top: 0 !important;
+    }
+}
+
+@media (max-width: 760px) {
+    .organism-create-shell,
+    .organism-game-shell {
+        display: flex !important;
+        flex-direction: column !important;
+    }
+
+    .organism-create-sidebar,
+    .organism-status-sidebar,
+    .organism-game-sidebar,
+    .organism-board-stage {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .organism-create-form {
+        margin: 24px 20px !important;
+    }
+
+    .organism-create-actions {
+        width: 100% !important;
+        margin: 20px 0 !important;
+        align-items: stretch !important;
+    }
+
+    .organism-create-actions input {
+        width: 100%;
+        max-width: 100%;
+        padding-left: 20px !important;
+        padding-right: 20px !important;
+    }
+
+    .organism-player-banner {
+        border-radius: 28px !important;
+        margin: 12px 0 !important;
+        padding: 20px 24px !important;
+    }
+
+    .organism-player-banner h1 {
+        font-size: clamp(1.8rem, 10vw, 2.6rem);
+        overflow-wrap: anywhere;
+    }
+
+    .organism-board-stage {
+        padding: 0 10px;
+    }
+
+    .organism-chat-panel,
+    .organism-game-info-panel {
+        margin: 12px !important;
+    }
+
+    .organism-chat-panel > div,
+    .organism-game-info-panel > div {
+        margin-left: 8px !important;
+        margin-right: 8px !important;
+    }
+
+    .organism-game-name-input,
+    .organism-description-input,
+    .organism-player-search,
+    .organism-player-search input,
+    .organism-player-suggestions {
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+
+    select {
+        margin-left: 0;
+    }
 }
 @font-face {
     font-family: 'Material Icons';
@@ -84,4 +251,880 @@ a:link, a:visited {
 
 .tooltip:hover .tooltiptext {
   visibility: visible;
+}
+
+/* Board-first setup and play surfaces */
+:root {
+    --organism-bg: #0c0f12;
+    --organism-panel: rgba(24, 28, 32, 0.96);
+    --organism-panel-soft: rgba(255, 255, 255, 0.06);
+    --organism-line: rgba(255, 255, 255, 0.12);
+    --organism-text: #f3f0e8;
+    --organism-muted: #9ca3a9;
+    --organism-accent: #c9f27b;
+    --organism-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
+}
+
+.organism-canvas-shell {
+    position: relative;
+    width: 100%;
+    min-width: 0;
+    min-height: 100vh;
+    overflow: hidden;
+    color: var(--organism-text);
+    background:
+        radial-gradient(circle at 50% 42%, rgba(76, 87, 80, 0.18), transparent 48%),
+        var(--organism-bg);
+}
+
+.organism-topbar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 50;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    min-height: 72px;
+    padding: 12px clamp(16px, 3vw, 42px);
+    background: linear-gradient(to bottom, rgba(12, 15, 18, 0.95), rgba(12, 15, 18, 0));
+    pointer-events: none;
+}
+
+.organism-topbar > * { pointer-events: auto; }
+
+.organism-wordmark {
+    display: inline-flex;
+    align-items: center;
+    justify-self: start;
+    gap: 10px;
+    color: var(--organism-text) !important;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.24em;
+}
+
+.organism-wordmark-mark {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--organism-line);
+    border-radius: 50%;
+    color: var(--organism-accent);
+    font-size: 0.78rem;
+    letter-spacing: 0;
+}
+
+.organism-title-cluster { position: relative; justify-self: center; }
+
+.organism-title-button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: min(48vw, 520px);
+    padding: 9px 13px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    color: var(--organism-text);
+    background: rgba(12, 15, 18, 0.62);
+    font: inherit;
+    cursor: pointer;
+}
+
+.organism-title-button:hover,
+.organism-title-button:focus-visible {
+    border-color: var(--organism-line);
+    background: rgba(31, 35, 39, 0.94);
+    outline: none;
+}
+
+.organism-title-button strong {
+    color: var(--organism-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.organism-title-chevron { color: var(--organism-muted); }
+
+.organism-title-popover {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 50%;
+    width: 250px;
+    padding: 12px;
+    transform: translateX(-50%);
+    border: 1px solid var(--organism-line);
+    border-radius: 18px;
+    background: var(--organism-panel);
+    box-shadow: var(--organism-shadow);
+}
+
+.organism-title-popover > div {
+    display: flex;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 7px 8px;
+    color: var(--organism-muted);
+    font-size: 0.82rem;
+}
+
+.organism-title-popover strong { color: var(--organism-text); }
+
+.organism-avatar-stack {
+    display: flex;
+    justify-self: end;
+    padding-left: 10px;
+}
+
+.organism-topbar-actions {
+    display: flex;
+    align-items: center;
+    justify-self: end;
+    gap: 12px;
+}
+
+.organism-topbar-actions .organism-icon-button {
+    width: 38px;
+    height: 38px;
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+}
+
+.organism-avatar {
+    display: grid;
+    place-items: center;
+    width: 31px;
+    height: 31px;
+    margin-left: -7px;
+    border: 2px solid var(--organism-bg);
+    border-radius: 50%;
+    color: white;
+    font-size: 0.72rem;
+    font-weight: 800;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+}
+
+.organism-canvas-stage {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    min-height: 100vh;
+    padding: 58px clamp(10px, 2vw, 28px) 104px;
+}
+
+.organism-canvas-stage .organism-board-svg {
+    width: min(82vw, calc(100vh - 112px), 980px);
+    max-height: calc(100vh - 112px);
+    filter: drop-shadow(0 22px 50px rgba(0, 0, 0, 0.32));
+}
+
+.organism-floating-dock {
+    position: fixed;
+    z-index: 35;
+    left: 50%;
+    bottom: 18px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: min(720px, calc(100vw - 32px));
+    padding: 10px 10px 10px 18px;
+    transform: translateX(-50%);
+    border: 1px solid var(--organism-line);
+    border-radius: 22px;
+    background: rgba(24, 28, 32, 0.92);
+    box-shadow: var(--organism-shadow);
+    backdrop-filter: blur(20px);
+}
+
+.organism-dock-copy {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    flex-direction: column;
+}
+
+.organism-dock-copy > span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.organism-dock-copy strong {
+    color: var(--organism-text);
+    overflow-wrap: anywhere;
+}
+
+.organism-dock-copy > span:last-child {
+    color: var(--organism-muted);
+    font-size: 0.78rem;
+}
+
+.organism-eyebrow {
+    color: var(--organism-accent);
+    font-size: 0.64rem;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+}
+
+.organism-primary-button,
+.organism-secondary-button,
+.organism-icon-button {
+    appearance: none;
+    border: 1px solid var(--organism-line) !important;
+    color: var(--organism-text) !important;
+    font-family: inherit !important;
+    cursor: pointer;
+}
+
+.organism-primary-button {
+    width: auto !important;
+    min-width: 124px;
+    margin: 0 !important;
+    padding: 13px 20px !important;
+    border-radius: 15px !important;
+    background: var(--organism-accent) !important;
+    color: #18200f !important;
+    font-size: 0.76rem !important;
+    font-weight: 900 !important;
+    letter-spacing: 0.12em !important;
+}
+
+.organism-primary-button:disabled {
+    background: #3c4245 !important;
+    color: #9ca3a9 !important;
+    cursor: default !important;
+    opacity: 0.78;
+}
+
+.organism-secondary-button {
+    min-height: 42px;
+    margin: 0 !important;
+    padding: 10px 16px !important;
+    border-radius: 13px !important;
+    background: var(--organism-panel-soft) !important;
+    font-size: 0.8rem !important;
+    letter-spacing: 0.02em !important;
+}
+
+.organism-icon-button {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    background: var(--organism-panel-soft);
+    font-size: 1.45rem;
+}
+
+.organism-setup-drawer {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    bottom: 12px;
+    z-index: 60;
+    display: flex;
+    width: min(430px, calc(100vw - 24px));
+    min-width: 0;
+    flex-direction: column;
+    transform: translateX(calc(100% + 24px));
+    border: 1px solid var(--organism-line);
+    border-radius: 26px;
+    background: var(--organism-panel);
+    box-shadow: var(--organism-shadow);
+    transition: transform 220ms ease;
+}
+
+.organism-setup-drawer.is-open { transform: translateX(0); }
+
+.organism-details-drawer {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    bottom: 12px;
+    z-index: 60;
+    display: flex;
+    width: min(430px, calc(100vw - 24px));
+    min-width: 0;
+    flex-direction: column;
+    transform: translateX(calc(100% + 24px));
+    border: 1px solid var(--organism-line);
+    border-radius: 26px;
+    background: var(--organism-panel);
+    box-shadow: var(--organism-shadow);
+    transition: transform 220ms ease;
+}
+
+.organism-details-drawer.is-open { transform: translateX(0); }
+
+.organism-drawer-header,
+.organism-drawer-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 20px;
+}
+
+.organism-drawer-header {
+    border-bottom: 1px solid var(--organism-line);
+}
+
+.organism-drawer-header h2 {
+    margin: 2px 0 0;
+    font-size: 1.35rem;
+}
+
+.organism-drawer-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 8px 20px 24px;
+}
+
+.organism-drawer-footer {
+    justify-content: flex-end;
+    border-top: 1px solid var(--organism-line);
+}
+
+.organism-field-group {
+    padding: 18px 0;
+    border-bottom: 1px solid var(--organism-line);
+}
+
+.organism-field-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.organism-field-heading > div:first-child { display: flex; flex-direction: column; }
+.organism-field-label { font-size: 0.82rem; font-weight: 800; }
+.organism-field-hint { color: var(--organism-muted); font-size: 0.72rem; }
+
+.organism-setup-drawer h3 {
+    margin: 0;
+    padding: 12px 0 5px;
+    color: var(--organism-muted);
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.organism-setup-drawer .organism-game-name-input,
+.organism-setup-drawer .organism-description-input,
+.organism-setup-drawer .organism-player-search,
+.organism-setup-drawer .organism-player-search input {
+    width: 100% !important;
+    max-width: 100% !important;
+}
+
+.organism-setup-drawer .organism-game-name-input,
+.organism-setup-drawer .organism-description-input,
+.organism-setup-drawer .organism-player-search input {
+    min-height: 44px;
+    margin: 6px 0 !important;
+    padding: 10px 14px !important;
+    border: 1px solid var(--organism-line) !important;
+    border-radius: 13px !important;
+    background: var(--organism-panel-soft) !important;
+    color: var(--organism-text) !important;
+    font-size: 0.92rem !important;
+    letter-spacing: 0.02em !important;
+}
+
+.organism-locked-game-title {
+    display: block;
+    margin-top: 8px;
+    overflow-wrap: anywhere;
+    font-size: 1.05rem;
+}
+
+.organism-player-seat {
+    display: flex;
+    min-width: 0;
+    min-height: 48px;
+    align-items: center;
+    margin: 7px 0;
+}
+
+.organism-player-seat-name,
+.organism-join-seat,
+.organism-open-seat {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    min-height: 46px;
+    box-sizing: border-box;
+    align-items: center;
+    gap: 10px;
+    border: 1px solid var(--organism-line);
+    border-radius: 13px;
+    background: var(--organism-panel-soft);
+}
+
+.organism-player-seat-name { padding: 8px 10px; }
+.organism-player-seat-name strong { overflow-wrap: anywhere; }
+
+.organism-seat-avatar {
+    display: inline-flex;
+    width: 30px;
+    height: 30px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    color: #fff;
+    font-size: 0.78rem;
+    font-weight: 900;
+}
+
+.organism-seat-remove {
+    min-height: 34px;
+    margin-left: auto;
+    padding: 6px 10px;
+    border: 0;
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--organism-muted);
+    cursor: pointer;
+}
+
+.organism-join-seat {
+    justify-content: center;
+    padding: 10px 14px;
+    border-width: 1px;
+    background: transparent;
+    font: inherit;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.organism-open-seat {
+    justify-content: center;
+    padding: 10px 14px;
+    border-style: dashed;
+    background: transparent;
+    opacity: 0.58;
+}
+
+.organism-lobby-status {
+    min-width: 0;
+    color: var(--organism-muted);
+    font-size: 0.78rem;
+    font-weight: 700;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+.organism-setup-drawer select {
+    min-height: 40px;
+    margin: 5px 8px 5px 0;
+    padding: 8px 30px 8px 12px;
+    border: 0;
+    border-radius: 11px;
+    font-size: 0.85rem;
+}
+
+.organism-options { margin-top: 16px; }
+.organism-options > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px;
+    border: 1px solid var(--organism-line);
+    border-radius: 15px;
+    background: var(--organism-panel-soft);
+    cursor: pointer;
+    list-style: none;
+}
+
+.organism-options > summary::-webkit-details-marker { display: none; }
+.organism-options > summary span:first-child { display: flex; flex-direction: column; }
+.organism-options > summary small { color: var(--organism-muted); font-size: 0.7rem; }
+.organism-options-body { padding: 10px 5px 0; }
+
+.organism-turn-dot {
+    flex: 0 0 auto;
+    width: 13px;
+    height: 13px;
+    border: 2px solid rgba(255, 255, 255, 0.55);
+    border-radius: 50%;
+    box-shadow: 0 0 0 5px rgba(255, 255, 255, 0.05);
+}
+
+.organism-action-dock { width: min(900px, calc(100vw - 32px)); }
+
+.organism-dock-actions,
+.organism-dock-actions > div,
+.organism-dock-actions > div > div {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 !important;
+}
+
+.organism-dock-actions span {
+    display: inline-flex !important;
+    align-items: center;
+    min-height: 40px;
+    margin: 0 !important;
+    padding: 8px 12px !important;
+    border-radius: 12px !important;
+    font-size: 0.72rem !important;
+    letter-spacing: 0.04em !important;
+    white-space: nowrap;
+}
+
+.organism-details-content > div { margin: 12px 0 !important; }
+
+.organism-details-content h1,
+.organism-details-content h2,
+.organism-details-content h3 {
+    font-size: 1rem;
+    letter-spacing: 0.05em;
+}
+
+.organism-details-content .organism-history-svg { max-width: 100%; }
+
+.organism-game-loader {
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    color: var(--organism-ink, #f4f0e6);
+    background:
+        radial-gradient(circle at 50% 42%, rgba(190, 255, 67, 0.09), transparent 30%),
+        #222;
+    font-family: BlinkMacSystemFont, -apple-system, "Segoe UI", sans-serif;
+    text-align: center;
+}
+
+.organism-game-loader-card {
+    width: min(100%, 360px);
+    display: grid;
+    justify-items: center;
+    gap: 12px;
+}
+
+.organism-game-loader-mark {
+    width: 42px;
+    height: 42px;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(190, 255, 67, 0.45);
+    border-radius: 50%;
+    color: #beff43;
+    font-size: 1.05rem;
+    font-weight: 900;
+    letter-spacing: 0;
+}
+
+.organism-game-loader-spinner {
+    position: relative;
+    width: 74px;
+    height: 74px;
+    margin: 14px 0 4px;
+    border: 2px solid rgba(244, 240, 230, 0.12);
+    border-top-color: #beff43;
+    border-radius: 50%;
+    animation: organism-loader-spin 900ms linear infinite;
+}
+
+.organism-game-loader-spinner::before,
+.organism-game-loader-spinner span {
+    content: "";
+    position: absolute;
+    border-radius: 50%;
+}
+
+.organism-game-loader-spinner::before {
+    inset: 10px;
+    border: 1px solid rgba(190, 255, 67, 0.28);
+    border-right-color: transparent;
+}
+
+.organism-game-loader-spinner span {
+    inset: 28px;
+    background: #beff43;
+    box-shadow: 0 0 20px rgba(190, 255, 67, 0.45);
+}
+
+.organism-game-loader h1 {
+    margin: 0;
+    color: #f4f0e6;
+    font-size: clamp(1.75rem, 6vw, 2.35rem);
+    line-height: 1.05;
+    letter-spacing: -0.035em;
+}
+
+.organism-game-loader p:last-child {
+    max-width: 32ch;
+    margin: 0;
+    color: #a7a39a;
+    font-size: 0.95rem;
+    line-height: 1.55;
+}
+
+@keyframes organism-loader-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .organism-game-loader-spinner {
+        animation: none;
+    }
+}
+
+.organism-discussion-panel {
+    min-width: 0;
+    margin-top: 20px;
+    padding: 16px;
+    border: 1px solid var(--organism-line);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.organism-discussion-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 14px;
+}
+
+.organism-discussion-heading h3 {
+    margin: 3px 0 0 !important;
+    padding: 0 !important;
+    color: var(--organism-text);
+    font-size: 1.05rem !important;
+    letter-spacing: 0 !important;
+}
+
+.organism-live-indicator {
+    color: var(--organism-accent);
+    font-size: 0.64rem;
+    font-weight: 900;
+    letter-spacing: 0.16em;
+}
+
+.organism-discussion-list {
+    display: flex;
+    max-height: 280px;
+    min-height: 104px;
+    flex-direction: column;
+    gap: 10px;
+    margin: 0;
+    padding: 3px 2px 12px;
+    overflow-y: auto;
+    list-style: none;
+}
+
+.organism-discussion-message {
+    display: flex;
+    min-width: 0;
+    align-items: flex-start;
+    gap: 9px;
+    padding: 0;
+}
+
+.organism-discussion-message.is-own { flex-direction: row-reverse; }
+
+.organism-discussion-avatar {
+    display: flex;
+    width: 28px;
+    height: 28px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid var(--message-color);
+    border-radius: 50%;
+    color: var(--organism-text);
+    background: var(--organism-panel-soft);
+    font-size: 0.68rem;
+    font-weight: 900;
+}
+
+.organism-discussion-bubble {
+    max-width: calc(100% - 42px);
+    min-width: 0;
+    padding: 9px 11px;
+    border-radius: 4px 14px 14px;
+    color: var(--organism-text);
+    background: var(--organism-panel-soft);
+}
+
+.organism-discussion-message.is-own .organism-discussion-bubble {
+    border-radius: 14px 4px 14px 14px;
+    background: rgba(201, 242, 123, 0.1);
+}
+
+.organism-discussion-meta {
+    display: flex;
+    min-width: 0;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 3px;
+}
+
+.organism-discussion-meta strong {
+    overflow-wrap: anywhere;
+    font-size: 0.72rem;
+}
+
+.organism-discussion-meta time {
+    flex: 0 0 auto;
+    color: var(--organism-muted);
+    font-size: 0.62rem;
+}
+
+.organism-discussion-bubble p {
+    margin: 0;
+    overflow-wrap: anywhere;
+    line-height: 1.42;
+}
+
+.organism-discussion-empty {
+    display: flex;
+    min-height: 92px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    color: var(--organism-muted);
+    text-align: center;
+}
+
+.organism-discussion-empty strong { color: var(--organism-text); }
+.organism-discussion-empty span { margin-top: 3px; font-size: 0.76rem; }
+
+.organism-discussion-composer { margin-top: 4px; }
+.organism-discussion-composer > label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+}
+
+.organism-discussion-compose-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+}
+
+.organism-discussion-compose-row input {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    padding: 10px 12px;
+    border: 1px solid var(--organism-line);
+    border-radius: 13px;
+    color: var(--organism-text);
+    background: var(--organism-panel-soft);
+    font: inherit;
+}
+
+.organism-discussion-compose-row input:focus {
+    border-color: var(--organism-accent);
+    outline: 2px solid rgba(201, 242, 123, 0.18);
+    outline-offset: 1px;
+}
+
+.organism-discussion-compose-row .organism-primary-button {
+    min-width: 82px;
+    min-height: 44px;
+    padding: 10px 14px !important;
+}
+
+.organism-discussion-feedback,
+.organism-discussion-readonly {
+    margin: 8px 2px 0;
+    color: var(--organism-muted);
+    font-size: 0.72rem;
+    line-height: 1.4;
+}
+
+.organism-discussion-feedback.error { color: #ffaaa0; }
+.organism-discussion-feedback.success { color: var(--organism-accent); }
+
+.organism-drawer-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    border: 0;
+    background: transparent;
+    pointer-events: none;
+}
+
+@media (max-width: 700px) {
+    .organism-topbar {
+        grid-template-columns: auto 1fr auto;
+        min-height: 60px;
+        padding: 9px 12px;
+    }
+
+    .organism-wordmark > span:last-child { display: none; }
+    .organism-title-button { max-width: 58vw; justify-self: center; }
+    .organism-avatar { width: 27px; height: 27px; font-size: 0.65rem; }
+    .organism-avatar:nth-child(n+4) { display: none; }
+
+    .organism-canvas-stage {
+        min-height: 100svh;
+        padding: 52px 6px 126px;
+    }
+
+    .organism-canvas-stage .organism-board-svg {
+        width: min(100%, calc(100svh - 148px));
+        max-height: calc(100svh - 148px);
+    }
+
+    .organism-floating-dock {
+        bottom: 10px;
+        width: calc(100vw - 20px);
+        padding: 9px 9px 9px 14px;
+        border-radius: 18px;
+        flex-wrap: wrap;
+    }
+
+    .organism-dock-copy { flex-basis: calc(100% - 145px); }
+    .organism-floating-dock .organism-primary-button { min-width: 116px; }
+    .organism-create-canvas .organism-floating-dock .organism-primary-button {
+        width: 100% !important;
+        flex-basis: 100%;
+    }
+
+    .organism-setup-drawer,
+    .organism-details-drawer {
+        top: 8vh;
+        right: 0;
+        bottom: 0;
+        width: 100%;
+        max-width: none;
+        border-radius: 24px 24px 0 0;
+        transform: translateY(105%);
+    }
+
+    .organism-setup-drawer.is-open,
+    .organism-details-drawer.is-open { transform: translateY(0); }
+
+    .organism-drawer-scrim {
+        background: rgba(0, 0, 0, 0.5);
+        pointer-events: auto;
+    }
+
+    .organism-drawer-footer .organism-primary-button { width: 100% !important; }
+
+    .organism-action-dock { align-items: flex-start; }
+    .organism-action-dock .organism-dock-copy { flex: 1; }
+    .organism-dock-actions { width: 100%; overflow-x: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .organism-setup-drawer,
+    .organism-details-drawer { transition: none; }
 }

@@ -82,6 +82,7 @@
 (defn examine
   "What is wrong with this game, if anything. Pure — writes nothing."
   [db game-key]
+  (persist/assert-legacy-game! db game-key)
   (let [inner-game (load-inner-game db game-key)
         history (raw-history db game-key)]
     (cond

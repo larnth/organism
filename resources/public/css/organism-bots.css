@@ -1,0 +1,72 @@
+/* ORGANISM theme adapter for the shared bot catalogue/editor. */
+:root {
+  color-scheme: dark;
+  --bot-bg: #0c0f12;
+  --bot-panel: #181c20;
+  --bot-panel-soft: #20262a;
+  --bot-line: #343a3f;
+  --bot-text: #f3f0e8;
+  --bot-muted: #a4acb1;
+  --bot-accent: #c9f27b;
+}
+html, body, #journey { min-width: 0; min-height: 100%; margin: 0; background: var(--bot-bg); }
+#journey * { box-sizing: border-box; }
+#journey a, #journey button, #journey input, #journey select { outline-offset: 3px; }
+#journey :focus-visible { outline: 2px solid var(--bot-accent); }
+
+.organism-bot-list-page {
+  width: min(100%, 1080px) !important;
+  margin: 0 auto;
+  padding: clamp(22px, 5vw, 54px) !important;
+  color: var(--bot-text) !important;
+  background: var(--bot-bg) !important;
+  font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif !important;
+}
+.organism-bot-list-page > div:first-child { padding: 16px 18px; border: 1px solid var(--bot-line); border-radius: 18px; background: var(--bot-panel); }
+.organism-bot-list-page h2, .organism-bot-list-page h3 { color: var(--bot-accent) !important; }
+.organism-bot-list-page a { border-radius: 11px !important; color: var(--bot-text) !important; }
+.organism-bot-list-page > div:not(:first-child) > div { border-color: var(--bot-line) !important; border-radius: 14px !important; background: var(--bot-panel) !important; }
+
+.organism-bot-editor-page {
+  color: var(--bot-text);
+  background: var(--bot-bg) !important;
+  font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+}
+.organism-bot-palette,
+.organism-bot-properties { flex: 0 0 auto; border-color: var(--bot-line) !important; background: var(--bot-panel) !important; }
+.organism-bot-canvas { min-width: 0; background: var(--bot-bg) !important; }
+.organism-bot-editor-page input,
+.organism-bot-editor-page select,
+.organism-bot-editor-page button { min-height: 38px; border-color: var(--bot-line) !important; border-radius: 9px !important; color: var(--bot-text) !important; background: var(--bot-panel-soft) !important; }
+.organism-bot-editor-page h3 { color: var(--bot-accent) !important; }
+.organism-new-diagram { display: grid; gap: 6px; margin-top: 10px; }
+.organism-new-diagram > label { color: var(--bot-muted); font-size: 10px; }
+.organism-new-diagram > div { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
+.organism-new-diagram button { width: auto !important; min-width: 54px; margin: 0 !important; color: #17200e !important; background: var(--bot-accent) !important; }
+
+@media (max-width: 760px) {
+  .organism-bot-editor-page {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 100svh;
+    overflow: visible !important;
+  }
+  .organism-bot-canvas { grid-row: 1; min-height: 62svh; border-bottom: 1px solid var(--bot-line); }
+  .organism-bot-palette,
+  .organism-bot-properties {
+    width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--bot-line) !important;
+    padding: 18px !important;
+  }
+  .organism-bot-palette { grid-row: 2; }
+  .organism-bot-properties { grid-row: 3; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}

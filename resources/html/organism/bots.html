@@ -6,6 +6,7 @@
     <title>ORGANISM — Bots</title>
     {% style "/assets/bulma/css/bulma.min.css" %}
     {% style "/css/screen.css" %}
+    {% style "/css/organism-bots.css?v=20260916-workspace" %}
   </head>
   <body>
     <div id="journey">
@@ -26,6 +27,6 @@
       var myBots  = "{{my-bots|addslashes|safe}}";
       var allBots = {{all-bots|js}};
     </script>
-    {% script "/js/journey-bots.js" %}
+    {% script "/js/journey-bots.js?v=20260916-workspace" %}
   </body>
 </html>

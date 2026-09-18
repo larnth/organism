@@ -36,7 +36,8 @@
     (let [player (-> request :path-params :player)
           session-player (get-in request [:session :player])]
       (cond
-        (= session-player player) (handler request)
+        (= (persist/player-identity-key session-player)
+           (persist/player-identity-key player)) (handler request)
         (nil? session-player)     (response/redirect (str "/login?redirect=" (:uri request)))
         :else                     (response/redirect "/")))))
 
@@ -51,24 +52,63 @@
   [_request]
   (response/redirect "/organism"))
 
+(defn- game-count-label
+  [count singular plural]
+  (str count " " (if (= 1 count) singular plural)))
+
+(defn- games-action-detail
+  [player active-games]
+  (let [active-count (count active-games)
+        player-key (persist/player-identity-key player)
+        pending-count (count (filter #(= player-key
+                                        (persist/player-identity-key (:current-player %)))
+                                     active-games))]
+    (cond
+      (pos? pending-count)
+      (str (game-count-label pending-count "turn waiting" "turns waiting")
+           " · "
+           (game-count-label active-count "active game" "active games"))
+
+      (pos? active-count)
+      (str (game-count-label active-count "active game" "active games")
+           " · continue or join another")
+
+      :else
+      "Find or join a table")))
+
 (defn organism-home-page
-  [request]
-  (layout/render
-   request
-   "organism/home.html"
-   {:session-player (get-in request [:session :player])}))
+  ([request]
+   (organism-home-page nil request))
+  ([db request]
+   (let [player (get-in request [:session :player])
+         player (when (and (string? player) (not (str/blank? player))) player)
+         encoded (when player
+                   (-> (java.net.URLEncoder/encode player "UTF-8")
+                       (str/replace "+" "%20")))
+         player-games (when (and db player)
+                        (persist/load-player-games db player "organism"))
+         active-games (vec (get player-games "active" []))]
+     (layout/render
+      request
+      "organism/home.html"
+      {:session-player player
+       :account-url (when player (str "/player/" encoded "/account"))
+       :player-initial (when player (str/upper-case (subs player 0 1)))
+       :games-action-detail (when player
+                              (games-action-detail player active-games))}))))
 
 (defn learn-page
   [request]
   (layout/render request "learn.html" {:session-player (get-in request [:session :player])}))
 
 (defn safe-redirect
-  "Only allow relative paths to prevent open redirect."
+  "Only allow local paths, including after browser URL normalization."
   [redirect _player]
   (if (and redirect
            (string? redirect)
            (clojure.string/starts-with? redirect "/")
-           (not (clojure.string/starts-with? redirect "//")))
+           (not (clojure.string/starts-with? redirect "//"))
+           (not (re-find #"[\\\u0000-\u001f\u007f]" redirect)))
     redirect
     "/"))
 
@@ -80,11 +120,18 @@
     (and redirect (clojure.string/starts-with? redirect "/oroboros")) "UNIVERSAL"
     :else "ORGANISM"))
 
+(defn- lobby-return?
+  [redirect]
+  (and (string? redirect)
+       (or (str/starts-with? redirect "/organism/create/")
+           (str/starts-with? redirect "/organism/play/"))))
+
 (defn login-page
   [request]
   (let [redirect (get-in request [:query-params "redirect"])]
     (layout/render request "login.html"
                    {:redirect redirect
+                    :lobby-return (lobby-return? redirect)
                     :game-title (game-title redirect)})))
 
 (defn register-url
@@ -99,6 +146,29 @@
       (str "/register?" (str/join "&" params))
       "/register")))
 
+(def ^:private registration-policy
+  {:player-max-length 32
+   ;; This Unicode pattern works in Java and HTML/JavaScript pattern syntax.
+   :player-pattern "[\\p{L}\\p{N}][\\p{L}\\p{N} _.\\-]{0,31}"
+   :password-min-length 12
+   :password-max-length 200})
+
+(defn valid-player-name?
+  [player]
+  (boolean
+   (and (string? player)
+        (re-matches (re-pattern (:player-pattern registration-policy)) player))))
+
+(defn valid-registration-password?
+  [password]
+  (and (string? password)
+       (<= (:password-min-length registration-policy)
+           (count password)
+           (:password-max-length registration-policy))))
+
+(defonce ^:private dummy-password-hash
+  (hashers/derive "public-login-timing-placeholder"))
+
 (defn login-submit
   [db request]
   (let [params (:params request)
@@ -106,36 +176,45 @@
         password (:password params)
         redirect (safe-redirect (:redirect params) player)
         stored-hash (persist/find-player-password db player)
-        ;; A name nobody has registered is the overwhelmingly common way to
-        ;; fail this form — someone who meant to sign up and typed the name
-        ;; they wanted. Say so and hand them the register page rather than
-        ;; leaving them to guess at a password that never existed.
-        unknown? (and (not (str/blank? player)) (nil? stored-hash))
+        password-valid? (hashers/check (or password "")
+                                       (or stored-hash dummy-password-hash))
         fail (fn [error extra]
                (layout/render request "login.html"
                               (merge {:error error
+                                      :player player
                                       :redirect (:redirect params)
+                                      :lobby-return (lobby-return? (:redirect params))
                                       :game-title (game-title (:redirect params))}
                                      extra)))]
     (cond
-      (and stored-hash (hashers/check password stored-hash))
-      (-> (response/redirect redirect)
-          (assoc :session {:player player}))
-
-      unknown?
-      (fail (str "No player named \"" player "\"")
-            {:register-url (register-url player (:redirect params))})
+      (and stored-hash password-valid?)
+      (let [canonical-player (persist/canonical-player-name db player)]
+        (-> (response/redirect redirect)
+            (assoc :session {:player canonical-player})))
 
       :else
       (fail "Invalid player name or password" nil))))
 
+(defn- render-registration
+  [request {:keys [player redirect error error-field]}]
+  (let [redirect (safe-redirect redirect player)
+        title (game-title redirect)]
+    (-> (layout/render
+         request
+         (if (= title "ORGANISM") "organism/register.html" "register.html")
+         {:player (when (string? player) player)
+          :redirect redirect
+          :game-title title
+          :registration-policy registration-policy
+          :login-url (str "/login?redirect=" (java.net.URLEncoder/encode redirect "UTF-8"))
+          :error error
+          :error-field error-field})
+        (assoc-in [:headers "Cache-Control"] "no-store"))))
+
 (defn register-page
   [request]
-  (let [redirect (get-in request [:query-params "redirect"])]
-    (layout/render request "register.html"
-                   {:redirect redirect
-                    :player (get-in request [:query-params "player"])
-                    :game-title (game-title redirect)})))
+  (render-registration request {:redirect (get-in request [:query-params "redirect"])
+                                :player (get-in request [:query-params "player"])}))
 
 (defn register-submit
   [db request]
@@ -143,32 +222,43 @@
         player (:player params)
         password (:password params)
         password-confirm (:password-confirm params)
-        redirect (safe-redirect (:redirect params) player)]
+        redirect (safe-redirect (:redirect params) player)
+        fail (fn [error field]
+               (render-registration request {:player player
+                                             :redirect redirect
+                                             :error error
+                                             :error-field field}))]
     (cond
-      (or (empty? player) (empty? password))
-      (layout/render request "register.html"
-                     {:error "Player name and password are required"
-                      :redirect (:redirect params)
-                      :game-title (game-title (:redirect params))})
+      (or (not (string? player)) (str/blank? player))
+      (fail "Choose a player name" "player")
+
+      (not (valid-player-name? player))
+      (fail "Player names must be 1–32 characters, starting with a letter or number; spaces, dots, underscores, and hyphens are also allowed"
+            "player")
+
+      (or (not (string? password)) (str/blank? password))
+      (fail "Choose a password, not only spaces" "password")
+
+      (not (valid-registration-password? password))
+      (fail (str "Passwords must be between " (:password-min-length registration-policy)
+                 " and " (:password-max-length registration-policy) " characters")
+            "password")
 
       (not= password password-confirm)
-      (layout/render request "register.html"
-                     {:error "Passwords do not match"
-                      :redirect (:redirect params)
-                      :game-title (game-title (:redirect params))})
+      (fail "Passwords do not match" "password-confirm")
 
       (persist/player-has-password? db player)
-      (layout/render request "register.html"
-                     {:error "That player name is already taken"
-                      :redirect (:redirect params)
-                      :game-title (game-title (:redirect params))})
+      (fail "That player name is already taken" "player")
 
       :else
-      (let [hashed (hashers/derive password)]
-        (persist/set-player-password! db player hashed)
-        (persist/update-player-preferences! db player {:color (board/random-color 0.4 0.8)})
-        (-> (response/redirect redirect)
-            (assoc :session {:player player}))))))
+      (let [hashed (hashers/derive password)
+            claimed? (persist/claim-player-name!
+                      db player hashed {:color (board/random-color 0.4 0.8)})]
+        (if claimed?
+          (let [canonical-player (persist/canonical-player-name db player)]
+            (-> (response/redirect redirect)
+                (assoc :session {:player canonical-player})))
+          (fail "That player name is already taken" "player"))))))
 
 (defn logout
   [request]
@@ -177,7 +267,9 @@
 
 (defn player-page
   [db request]
-  (let [player-key (-> request :path-params :player)
+  (let [requested-player (-> request :path-params :player)
+        player-key (or (persist/canonical-player-name db requested-player)
+                       requested-player)
         preferences (persist/find-player-preferences db player-key)
         player-games (persist/load-player-games db player-key)]
     (layout/render
@@ -203,27 +295,34 @@
 
 (defn apply-player-preferences
   [db request]
-  (let [player (-> request :path-params :player)]
-    (println "applying player preferences: " player (:params request))
-    (persist/update-player-preferences! db player (:params request))
+  (let [requested-player (-> request :path-params :player)
+        player (or (persist/canonical-player-name db requested-player)
+                   requested-player)]
+    (persist/update-player-preferences! db player (select-keys (:params request) [:color]))
     (response/response {:ok true :status :success})))
 
 (defn account-page
   [db request]
-  (let [player (-> request :path-params :player)
+  (let [requested-player (-> request :path-params :player)
+        player (or (persist/canonical-player-name db requested-player)
+                   requested-player)
         preferences (persist/find-player-preferences db player)
-        color (or (:color preferences) "#888888")]
+        color (or (:color preferences) "#888888")
+        encoded-player (-> (java.net.URLEncoder/encode player "UTF-8")
+                           (str/replace "+" "%20"))]
     (layout/render
      request
      "account.html"
      {:player player
+      :encoded-player encoded-player
       :color color})))
 
 (defn account-submit
   [db request]
-  (let [player (-> request :path-params :player)
-        color (get-in request [:params :color])]
-    (persist/update-player-preferences! db player {:color color})
+  (let [requested-player (-> request :path-params :player)
+        player (or (persist/canonical-player-name db requested-player)
+                   requested-player)]
+    (persist/update-player-preferences! db player (select-keys (:params request) [:color]))
     (response/response {:ok true})))
 
 (defn home-routes
@@ -233,7 +332,7 @@
                  middleware/wrap-formats]}
    ["/" {:get root-redirect}]
    ["/api/search-players" {:get (partial shared/search-players db)}]
-   ["/organism" {:get organism-home-page}]
+   ["/organism" {:get (partial organism-home-page db)}]
    ["/eternal" {:get eternal-page}]
    ["/login" {:get login-page
               :post (partial login-submit db)}]

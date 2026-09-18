@@ -134,6 +134,33 @@
   (testing "a key with no game behind it is a 404, not a crash"
     (is (= 404 (:status (delete-request "alice" "no-such-game"))))))
 
+(deftest deletion-cannot-observe-or-destroy-an-unpublished-transition
+  (db/insert! *db* :games
+              {:key "activating"
+               :transition-id "launch-token"
+               :transition-state "activating"
+               :created-by "alice"
+               :invocation {:players players}})
+  (db/insert! *db* :open-games
+              {:key "activating"
+               :lifecycle "retired"
+               :retired-transition-id "launch-token"
+               :created-by "alice"
+               :invocation {:players players}})
+  (is (= 404 (:status (delete-request "alice" "activating"))))
+  (is (some? (db/one *db* :games {:key "activating"})))
+  (is (some? (db/one *db* :open-games {:key "activating"}))))
+
+(deftest an-account-colliding-with-a-bot-seat-cannot-delete-or-keep-the-game
+  (create-test-game! *db* "bot-owned-seat" ["alice" "OBO-A"] #{"OBO-A"})
+  (doseq [account ["OBO-A" "obo-a"]]
+    (is (= 400 (:status (delete-request account "bot-owned-seat"))))
+    (is (= 400 (:status
+                (shared/keep-game! *db*
+                                   {:session {:player account}
+                                    :path-params {:play "bot-owned-seat"}})))))
+  (is (some? (db/one *db* :games {:key "bot-owned-seat"}))))
+
 (deftest reaper-takes-only-the-silent
   (create-test-game! *db* "silent" players)
   (create-test-game! *db* "revived" players)
@@ -170,3 +197,15 @@
 
     (testing "an unmarked game is never a candidate"
       (is (zero? (:deleted-count (reap/sweep! *db* {:now now})))))))
+
+(deftest lobby-deletion-respects-both-mutation-and-launch-claims
+  (doseq [claim [persist/claim-open-game-mutation! persist/claim-open-game-start!]]
+    (persist/create-open-game! *db* "claimed" {:players players} "alice")
+    (let [claimed (promise) release (promise)
+          launching (future (claim *db* "claimed") (deliver claimed true) @release)]
+      (is (= true (deref claimed 5000 ::timeout)))
+      (try
+        (is (= 409 (:status (delete-request "alice" "claimed"))))
+        (is (some? (persist/find-open-game *db* "claimed")))
+        (finally (deliver release true) (deref launching 5000 nil))))
+    (db/delete! *db* :open-games {:key "claimed"})))

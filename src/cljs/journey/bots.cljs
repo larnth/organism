@@ -89,6 +89,9 @@
 (defonce save-status
   (r/atom nil))
 
+(defonce new-diagram-name
+  (r/atom ""))
+
 (defonce next-id-counter
   (r/atom 1000))
 
@@ -654,7 +657,7 @@
 
 (defn bot-list-page []
   (let [my-set (set (map :name @my-bots-list))]
-    [:div {:style {:padding "48px" :background page-bg
+    [:main.organism-bot-list-page {:style {:padding "48px" :background page-bg
                    :min-height "100vh" :color text-c
                    :font-family "monospace"}}
      [:div {:style {:display "flex" :align-items "center" :margin-bottom "24px"
@@ -719,7 +722,7 @@
     "#333"))
 
 (defn palette []
-  [:div {:style {:width "200px" :background panel-bg
+  [:aside.organism-bot-palette {:style {:width "200px" :background panel-bg
                  :border-right (str "1px solid " border-c)
                  :overflow-y "auto"
                  :padding "16px 12px"
@@ -1041,7 +1044,7 @@
      _ (js/document.addEventListener "keydown" on-key)]
     (let [b @bot
           z @canvas-zoom]
-      [:div {:style {:flex 1 :background "#04040E"
+      [:section.organism-bot-canvas {:style {:flex 1 :background "#04040E"
                      :overflow "hidden"
                      :position "relative"}
              :on-wheel on-wheel}
@@ -1185,7 +1188,7 @@
                 :style input-style}])]))
 
 (defn properties-panel []
-  [:div {:style {:width "280px" :background panel-bg
+  [:aside.organism-bot-properties {:style {:width "280px" :background panel-bg
                  :border-left (str "1px solid " border-c)
                  :overflow-y "auto"
                  :padding "16px 14px"
@@ -1241,16 +1244,31 @@
                   :style {:background "none" :border "none" :cursor "pointer"
                           :color "#886666" :font-size "11px"}}
          "✕"])])
-   [:button {:on-click (fn []
-                         (let [n (js/prompt "diagram name:")]
-                           (when (and n (seq (str/trim n)))
-                             (add-diagram! n))))
+   [:div.organism-new-diagram
+    [:label {:for "new-diagram-name"} "New diagram name"]
+    [:div
+     [:input {:id "new-diagram-name"
+              :type "text"
+              :value @new-diagram-name
+              :placeholder "branch-name"
+              :on-change #(reset! new-diagram-name (.. % -target -value))
+              :on-key-down (fn [event]
+                             (when (and (= "Enter" (.-key event))
+                                        (seq (str/trim @new-diagram-name)))
+                               (.preventDefault event)
+                               (add-diagram! @new-diagram-name)
+                               (reset! new-diagram-name "")))
+              :style input-style}]
+     [:button {:on-click (fn []
+                           (when (seq (str/trim @new-diagram-name))
+                             (add-diagram! @new-diagram-name)
+                             (reset! new-diagram-name "")))
              :style {:width "100%" :background "transparent"
                      :border (str "1px dashed " muted) :border-radius "4px"
                      :padding "6px" :color muted :cursor "pointer"
                      :font-family "monospace" :font-size "11px"
                      :margin-top "8px"}}
-    "+ NEW DIAGRAM"]
+      "ADD"]]]
 
    ;; selected tile
    (when-let [{:keys [diagram tile]} @selected]
@@ -1276,7 +1294,7 @@
            "DELETE TILE"])]))])
 
 (defn bot-editor-page []
-  [:div {:style {:display "flex" :width "100vw" :height "100vh"
+  [:main.organism-bot-editor-page {:style {:display "flex" :width "100vw" :height "100vh"
                  :background page-bg :overflow "hidden"}}
    [palette]
    [canvas]

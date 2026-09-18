@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ORGANISM — Bot sandbox</title>
+    <link rel="stylesheet" href="/css/organism-community.css?v=20260916-community">
+  </head>
+  <body>
+    <main class="organism-error-page">
+      <section class="organism-error-card organism-generate-card" aria-labelledby="generate-title">
+        <a class="organism-error-wordmark" href="/organism">O&nbsp; / &nbsp;ORGANISM</a>
+        <p class="organism-error-code">BOT SANDBOX</p>
+        <h1 id="generate-title">Watch a world grow on its own.</h1>
+        <p>This creates a new five-player bot game, saves it, and starts it immediately. You’ll enter as an observer while the bots play.</p>
+        <form method="POST" action="/organism/generate">
+          {% csrf-field %}
+          <button class="organism-generate-action" type="submit">Generate bot game <span aria-hidden="true">→</span></button>
+        </form>
+        <a class="organism-generate-cancel" href="/organism">Cancel and return home</a>
+      </section>
+    </main>
+  </body>
+</html>

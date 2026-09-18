@@ -1,110 +1,114 @@
 <!DOCTYPE html>
-<html style="background-color:#111">
+<html lang="en">
   <head>
     <meta charset="UTF-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>ORGANISM</title>
-    {% style "/assets/bulma/css/bulma.min.css" %}
-    {% style "/css/screen.css" %}
-    <style>
-      body { background-color: #111; margin: 0; }
-      html, body { height: 100%; margin: 0; }
-      .home-layout {
-        display: flex;
-        flex-direction: row;
-        height: 100vh;
-      }
-      .cover-panel {
-        flex: 1;
-        display: flex;
-        justify-content: center;
-        align-items: stretch;
-        overflow: hidden;
-      }
-      .cover-link {
-        display: flex;
-        align-items: stretch;
-      }
-      .cover-link img {
-        height: 100vh;
-        width: auto;
-        display: block;
-        object-fit: contain;
-      }
-      .nav-panel {
-        width: 280px;
-        min-width: 220px;
-        padding: 3rem 2rem 2rem 1rem;
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-      }
-      .nav-label {
-        color: #555;
-        font-size: 0.75rem;
-        text-transform: uppercase;
-        letter-spacing: 0.1em;
-        margin-bottom: 0.25rem;
-        margin-top: 1.25rem;
-      }
-      .nav-link {
-        display: block;
-        color: #ccc;
-        font-size: 1.1rem;
-        padding: 0.4rem 0;
-        text-decoration: none;
-        border-bottom: 1px solid #222;
-        transition: color 0.15s;
-      }
-      .nav-link:hover {
-        color: #fff;
-        text-decoration: none;
-      }
-      .nav-link.player-link {
-        color: #adf;
-        font-weight: bold;
-      }
-      .nav-link.player-link:hover {
-        color: #cef;
-      }
-    </style>
+    <meta name="description" content="Play ORGANISM, Ryan Spangler’s living world of strategy. Learn the rules, watch a game, or take your next turn.">
+    <title>ORGANISM — Make your move</title>
+    <link rel="stylesheet" href="/css/landing.css?v=20260915-play-dock">
+    <script src="/js/landing.js?v=20260915-play-dock" defer></script>
   </head>
-  <body>
-    <div class="home-layout">
-      <div class="cover-panel">
-        <a class="cover-link" href="/img/organism-rulebook.pdf" target="_blank">
-          <img src="/img/rulebook-cover-01.png" alt="ORGANISM Rulebook Cover"/>
-        </a>
+  <body class="organism-landing">
+    {% include "organism/landing-icons.html" %}
+    <a class="skip" href="#menu">Skip to the menu</a>
+    <main class="landing-shell">
+      <div class="landing-layout">
+        <figure class="art">
+          <a class="art-link" href="/img/organism-rulebook.pdf" target="_blank" rel="noopener" aria-label="Open the original ORGANISM rulebook (PDF, new tab)">
+            <img src="/img/rulebook-cover-01.png" alt="Original ORGANISM cover, designed by Ryan Spangler with artwork by Wyn Tiedmers." width="1316" height="1316" fetchpriority="high">
+          </a>
+          <figcaption>
+            <span>The original game. A new place to play.</span>
+            <a href="/img/organism-rulebook.pdf" target="_blank" rel="noopener">Open the rulebook <span aria-hidden="true">↗</span></a>
+          </figcaption>
+        </figure>
+
+        <section class="menu" id="menu" aria-labelledby="landing-title" tabindex="-1">
+          <div class="menu-top">
+            <div class="wordmark"><span class="wordmark-mark" aria-hidden="true">O</span> ORGANISM</div>
+            <span class="edition">the online edition</span>
+          </div>
+          <div class="creatures" aria-hidden="true">
+            <span class="creature eat"><svg class="glyph" viewBox="0 0 32 32"><use href="#landing-eat" width="32" height="32"/></svg></span>
+            <span class="creature grow"><svg class="glyph" viewBox="0 0 32 32"><use href="#landing-grow" width="32" height="32"/></svg></span>
+            <span class="creature move"><svg class="glyph" viewBox="0 0 32 32"><use href="#landing-move" width="32" height="32"/></svg></span>
+          </div>
+
+          {% if session-player %}
+          <h1 id="landing-title"><span>Welcome back.</span></h1>
+          <p class="intro">Join a table or start something new.</p>
+          <div class="player-header">
+            <a class="identity" href="{{account-url}}">
+              <span class="avatar" aria-hidden="true">{{player-initial}}</span>
+              <span class="player-name">{{session-player}}</span>
+            </a>
+            <a class="logout" href="/logout">Log out</a>
+          </div>
+          <nav class="actions" aria-label="Play ORGANISM">
+            <a class="action action--primary" href="/organism/play">
+              <span class="icon-disc"><svg class="glyph" viewBox="0 0 32 32" aria-hidden="true"><use href="#landing-move" width="32" height="32"/></svg></span>
+              <span class="action-copy"><strong>Games &amp; tables</strong><small>{{games-action-detail}}</small></span>
+              <svg class="arrow" viewBox="0 0 24 24" aria-hidden="true"><use href="#landing-arrow"/></svg>
+            </a>
+            <a class="action" href="/organism/create">
+              <span class="icon-disc"><svg class="glyph" viewBox="0 0 32 32" aria-hidden="true"><use href="#landing-grow" width="32" height="32"/></svg></span>
+              <span class="action-copy"><strong>Create a game</strong><small>Make room for something new</small></span>
+              <svg class="arrow" viewBox="0 0 24 24" aria-hidden="true"><use href="#landing-arrow"/></svg>
+            </a>
+          </nav>
+          <nav class="mini-links" aria-label="Watch and learn">
+            <a class="mini-link" href="/organism/observe">Watch a game<small>See what’s unfolding <span aria-hidden="true">↗</span></small></a>
+            <a class="mini-link" href="/organism/learn">Learn to play<small>Rules &amp; examples <span aria-hidden="true">↗</span></small></a>
+          </nav>
+          {% else %}
+          <h1 id="landing-title">Eat. Grow.<br><span>Make your move.</span></h1>
+          <p class="intro">A living little world of strategy. Build your organism, outgrow your rivals, and see what unfolds.</p>
+          <nav class="actions" aria-label="Start exploring">
+            <a class="action action--primary" id="landing-play" href="/login?redirect=/organism/play" aria-haspopup="dialog" aria-controls="landing-account-dialog" aria-expanded="false">
+              <span class="icon-disc"><svg class="glyph" viewBox="0 0 32 32" aria-hidden="true"><use href="#landing-grow" width="32" height="32"/></svg></span>
+              <span class="action-copy"><strong>Let’s play</strong><small>Log in or make your first account</small></span>
+              <svg class="arrow" viewBox="0 0 24 24" aria-hidden="true"><use href="#landing-arrow"/></svg>
+            </a>
+            <a class="action action--watch" href="/organism/observe">
+              <span class="icon-disc"><svg class="glyph glyph--outline" viewBox="0 0 32 32" aria-hidden="true"><use href="#landing-eye"/></svg></span>
+              <span class="action-copy"><strong>Watch a game</strong><small>A little observation goes a long way</small></span>
+              <svg class="arrow" viewBox="0 0 24 24" aria-hidden="true"><use href="#landing-arrow"/></svg>
+            </a>
+            <a class="action action--learn" href="/organism/learn">
+              <span class="icon-disc"><svg class="glyph glyph--outline" viewBox="0 0 32 32" aria-hidden="true"><use href="#landing-book"/></svg></span>
+              <span class="action-copy"><strong>Learn to play</strong><small>The rules, one small step at a time</small></span>
+              <svg class="arrow" viewBox="0 0 24 24" aria-hidden="true"><use href="#landing-arrow"/></svg>
+            </a>
+          </nav>
+          <p class="account-note">Already part of the ecosystem? <a href="/login?redirect=/organism">Log in</a></p>
+          {% endif %}
+
+          <details class="explore">
+            <summary>More to explore</summary>
+            <nav class="explore-links" aria-label="More ORGANISM destinations">
+              <a href="/organism/players"><span><strong>Meet the players</strong><small>Explore the community</small></span><span aria-hidden="true">→</span></a>
+              <a href="/organism/generate"><span><strong>Bot sandbox</strong><small>Review and create an all-bot game</small></span><span aria-hidden="true">→</span></a>
+              {% if session-player %}
+              <a href="/organism/bots"><span><strong>Your bots</strong><small>Manage your bot players</small></span><span aria-hidden="true">→</span></a>
+              {% endif %}
+            </nav>
+          </details>
+          <p class="credit">A game by <strong>Ryan Spangler</strong>.<br>Original artwork by <strong>Wyn Tiedmers</strong>.</p>
+        </section>
       </div>
+    </main>
 
-      <nav class="nav-panel">
-        {% if session-player %}
-          <span class="nav-label">you</span>
-          <a class="nav-link player-link" href="/player/{{session-player}}/account">{{session-player}}</a>
-          <a class="nav-link" href="/organism/create">create</a>
-          <a class="nav-link" href="/organism/play">play</a>
-          <a class="nav-link" href="/organism/bots">bots</a>
-
-          <span class="nav-label">explore</span>
-          <a class="nav-link" href="/organism/observe">observe</a>
-          <a class="nav-link" href="/organism/players">players</a>
-          <a class="nav-link" href="/organism/generate">generate</a>
-          <a class="nav-link" href="/organism/learn">learn</a>
-
-          <span class="nav-label" style="margin-top:2rem"></span>
-          <a class="nav-link" href="/logout" style="color:#666; font-size:0.9rem">log out</a>
-        {% else %}
-          <span class="nav-label">account</span>
-          <a class="nav-link" href="/login?redirect=/organism">log in</a>
-          <a class="nav-link" href="/register?redirect=/organism">sign up</a>
-
-          <span class="nav-label">explore</span>
-          <a class="nav-link" href="/organism/observe">observe</a>
-          <a class="nav-link" href="/organism/players">players</a>
-          <a class="nav-link" href="/organism/generate">generate</a>
-          <a class="nav-link" href="/organism/learn">learn</a>
-        {% endif %}
-      </nav>
-    </div>
+    {% if not session-player %}
+    <dialog id="landing-account-dialog" aria-labelledby="account-dialog-title" aria-describedby="account-dialog-description">
+      <div class="dialog-top">
+        <span>ORGANISM · COME PLAY</span>
+        <form method="dialog"><button class="close" id="landing-dialog-close" aria-label="Close account choices">×</button></form>
+      </div>
+      <h2 id="account-dialog-title">A seat at the table.</h2>
+      <p id="account-dialog-description">Sign in to find a game or start one of your own. New here? Create an account to join in.</p>
+      <a class="action action--primary" href="/login?redirect=/organism/play"><span class="action-copy"><strong>Log in</strong><small>Welcome back. Let’s play.</small></span><span aria-hidden="true">→</span></a>
+      <a class="action" href="/register?redirect=/organism/play"><span class="action-copy"><strong>Create account</strong><small>Your first organism is waiting.</small></span><span aria-hidden="true">→</span></a>
+    </dialog>
+    {% endif %}
   </body>
 </html>

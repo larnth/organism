@@ -1,4 +1,5 @@
 import type { GameProjection, LegalAction } from "../api/contracts";
+import engineActionFixtures from "./eatGrowFixtures.json";
 
 const demoRings = ["yellow", "red", "blue", "orange", "green", "purple"];
 const demoAdjacencies = demoRings.flatMap((ring, level) =>
@@ -107,6 +108,55 @@ function playerStage(revision: number, legalActions: LegalAction[]): GameProject
 
 export const playerProjection = playerStage(8, [planMove]);
 
+const actionFixtures = engineActionFixtures as unknown as {
+  eat: GameProjection[];
+  grow: GameProjection[];
+  eatResults: Array<{ path: string[]; projection: GameProjection }>;
+  growResults: Array<{ path: string[]; projection: GameProjection }>;
+};
+
+export const eatProjection = actionFixtures.eat[0];
+export const growProjection = actionFixtures.grow[0];
+
+function actionIsProjected(actions: LegalAction[], actionId: string | string[]) {
+  const path = typeof actionId === "string" ? [actionId] : actionId;
+  let candidates = actions;
+  for (const id of path) {
+    const action = candidates.find(({ actionId: candidate }) => candidate === id);
+    if (!action) return false;
+    candidates = action.nextActions ?? [];
+  }
+  return true;
+}
+
+function engineFixtureSubmitter(
+  stages: GameProjection[],
+  results: Array<{ path: string[]; projection: GameProjection }>,
+) {
+  return async (
+    _gameId: string,
+    actionId: string | string[],
+    revision: number,
+  ): Promise<GameProjection> => {
+    const current = stages.find((stage) => stage.revision === revision);
+    const next = stages.find((stage) => stage.revision === revision + 1);
+    if (!current || !actionIsProjected(current.legalActions, actionId)) {
+      throw new Error("Action is not legal in this fixture state.");
+    }
+    const path = typeof actionId === "string" ? [actionId] : actionId;
+    const terminal = results.find((candidate) =>
+      candidate.path.length === path.length
+      && candidate.path.every((id, index) => id === path[index])
+    );
+    if (terminal) return terminal.projection;
+    if (next && path.length === 1) return next;
+    throw new Error("Fixture result is missing for that legal action path.");
+  };
+}
+
+export const eatSubmitAction = engineFixtureSubmitter(actionFixtures.eat, actionFixtures.eatResults);
+export const growSubmitAction = engineFixtureSubmitter(actionFixtures.grow, actionFixtures.growResults);
+
 const useMove: LegalAction = {
   actionId: "bf29a6291d9e24785810edade8e1649b6b7a5e941afdf58784df6bf972171753",
   kind: "choose-action",
@@ -164,25 +214,31 @@ const targetsBySource: Record<number, LegalAction[]> = {
   ],
 };
 
+moveSources[0].nextActions = targetsBySource[3];
+moveSources[1].nextActions = targetsBySource[4];
+
 let demoMoveSource = 4;
 
 export async function demoSubmitAction(
   _gameId: string,
-  actionId: string,
+  actionId: string | string[],
   _revision: number,
 ): Promise<GameProjection> {
-  if (actionId === planMove.actionId) return playerStage(9, [useMove]);
-  if (actionId === useMove.actionId) return playerStage(10, moveSources);
+  const actionPath = Array.isArray(actionId) ? actionId : [actionId];
+  const firstActionId = actionPath[0];
+  const finalActionId = actionPath[actionPath.length - 1];
 
-  const source = moveSources.find((action) => action.actionId === actionId)?.source;
+  if (firstActionId === planMove.actionId) return playerStage(9, [useMove]);
+  if (firstActionId === useMove.actionId) return playerStage(10, moveSources);
+
+  const source = moveSources.find((action) => action.actionId === firstActionId)?.source;
   if (Array.isArray(source) && typeof source[1] === "number") {
     demoMoveSource = source[1];
-    return playerStage(11, targetsBySource[demoMoveSource]);
+    if (actionPath.length === 1) return playerStage(11, targetsBySource[demoMoveSource]);
   }
 
-  const target = Object.values(targetsBySource)
-    .flat()
-    .find((action) => action.actionId === actionId)
+  const target = targetsBySource[demoMoveSource]
+    .find((action) => action.actionId === finalActionId)
     ?.targets?.[0];
   if (Array.isArray(target) && typeof target[0] === "string" && typeof target[1] === "number") {
     const game = observerProjection.game!;

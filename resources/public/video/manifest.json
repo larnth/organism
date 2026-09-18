@@ -1,0 +1,65 @@
+{
+  "origin": "Original ORGANISM learning videos recovered from the upstream application; not generated replacements.",
+  "videos": [
+    {
+      "file": "clip_eat.mp4",
+      "source": "https://playorganism.io/video/clip_eat.mp4",
+      "bytes": 1516338,
+      "sha256": "49a244f16a5d37bfbfdfaaa632bdbaac878b089783aa120bff6387fc49638437"
+    },
+    {
+      "file": "clip_move.mp4",
+      "source": "https://playorganism.io/video/clip_move.mp4",
+      "bytes": 1029745,
+      "sha256": "7895d107e20af6aba1d313c26c820b93954b1299d2be4432da8d1854083c8329"
+    },
+    {
+      "file": "clip_grow.mp4",
+      "source": "https://playorganism.io/video/clip_grow.mp4",
+      "bytes": 1373853,
+      "sha256": "25ea46f7658b137910ea50ff00f26a1b0ec1d6f3833d591fa9feb88d44d253c2"
+    },
+    {
+      "file": "clip_circulate.mp4",
+      "source": "https://playorganism.io/video/clip_circulate.mp4",
+      "bytes": 1352733,
+      "sha256": "1276c751cfb176f372a52abe74619be879c5ad6adc909c32297d89a21d23887d"
+    },
+    {
+      "file": "clip_conflict.mp4",
+      "source": "https://playorganism.io/video/clip_conflict.mp4",
+      "bytes": 1383492,
+      "sha256": "70226523e05fb77d8b79da0b2e7fb44b0284fb9a75acbd60584ca490106a68e2"
+    },
+    {
+      "file": "clip_perish.mp4",
+      "source": "https://playorganism.io/video/clip_perish.mp4",
+      "bytes": 1191760,
+      "sha256": "2b5e4abc2e7b88d833887f615ab99b64d427750978ab97b7ceeb37ab67f90b54"
+    },
+    {
+      "file": "clip_power.mp4",
+      "source": "https://playorganism.io/video/clip_power.mp4",
+      "bytes": 1646625,
+      "sha256": "c1ac1fed891d248da4e799eb59edfec19b6f8975294cb55af1fb5564846d47ab"
+    },
+    {
+      "file": "clip_two_org.mp4",
+      "source": "https://playorganism.io/video/clip_two_org.mp4",
+      "bytes": 1325857,
+      "sha256": "5a07b4fa3c72a167df16baf7c147489ad86eb5811d1bf67498f4d4d126cde07c"
+    },
+    {
+      "file": "clip_three_org.mp4",
+      "source": "https://playorganism.io/video/clip_three_org.mp4",
+      "bytes": 1698570,
+      "sha256": "3018c04b751f4e50e933145a12833e2e985f6a80915d313970a4629833f91a7b"
+    },
+    {
+      "file": "zach-dan-ryan-play.mp4",
+      "source": "https://playorganism.io/video/zach-dan-ryan-play.mp4",
+      "bytes": 8250303,
+      "sha256": "9a31385bda8f73dd5aed3d73583e1c81c2d61741d2ba9c2786d30af7cde7dc0e"
+    }
+  ]
+}

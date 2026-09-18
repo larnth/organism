@@ -13,6 +13,7 @@
     {% style "/assets/bulma/css/bulma.min.css" %}
     {% style "/assets/material-icons/css/material-icons.min.css" %}
     {% style "/css/screen.css" %}
+    {% style "/css/organism-community.css?v=20260917-game-discovery" %}
 
     <script type="text/javascript">
       var csrfToken = {{csrf-token|js}};
@@ -28,6 +29,6 @@
       var isObserve = false;
       console.log("player key: " + playerKey);
     </script>
-    {% script "/js/organism.js" %}
+    {% script "/js/organism.js?v=20260917-game-discovery" %}
   </body>
 </html>

@@ -1,5 +1,8 @@
 {
   "private": true,
+  "scripts": {
+    "test:acceptance": "node client/scripts/acceptance.mjs"
+  },
   "devDependencies": {
     "shadow-cljs": "^2.28.0"
   },

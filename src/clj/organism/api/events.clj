@@ -42,12 +42,14 @@
    when the requested revision cannot be satisfied from retained history."
   [game-state viewer after-revision]
   (let [current (commands/current-revision game-state)
-        available? (and (integer? after-revision)
+        available? (and (nil? (:revision game-state))
+                        (integer? after-revision)
                         (<= 0 after-revision current))]
     {:gameId (:key game-state)
      :fromRevision after-revision
      :toRevision current
-     :events (if available?
-               (mapv #(update-event game-state viewer %)
-                     (range (inc after-revision) (inc current)))
-               [(snapshot game-state viewer)])}))
+     :events (cond
+               (= after-revision current) []
+               available? (mapv #(update-event game-state viewer %)
+                                 (range (inc after-revision) (inc current)))
+               :else [(snapshot game-state viewer)])}))
